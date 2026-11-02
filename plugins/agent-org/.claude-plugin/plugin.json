@@ -1,7 +1,7 @@
 {
   "name": "agent-org",
   "description": "智能体组织：七个序列、三个职级的 Claude Code 子智能体，五类任务包，飞书项目台账和飞书文档，项目管理 +2 做唯一入口。",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": {
     "name": "Fanshi"
   }

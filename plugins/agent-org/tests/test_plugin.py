@@ -2523,12 +2523,15 @@ class SpecAndRoutingTest(ProjectCase):
 class TemplateSpaceTest(ProjectCase):
     """The template space project spaces are copied from, and a project space that is still blank."""
 
-    def fake_cli(self, fd, name="std_template"):
+    def fake_cli(self, fd, name="std_template", held=()):
         calls = []
 
         def fake_run(cmd, timeout=30):
             calls.append(cmd)
             s = " ".join(cmd)
+            if "workitem query" in s:                       # held: type_keys that have a work item
+                row = [{"moql_field_list": [{"key": "work_item_id", "value": {"long_value": 1}}]}]
+                return 0, json.dumps({"data": {"0": row} if any("`%s`" % k in s for k in held) else {}}), ""
             if "export_field_dictionary.py" in s:
                 with open(os.path.join(cmd[cmd.index("--out-dir") + 1], "field-dictionary.json"), "w", encoding="utf-8") as f:
                     json.dump(fd, f, ensure_ascii=False)
@@ -2586,6 +2589,15 @@ class TemplateSpaceTest(ProjectCase):
         self.assertIn("## 每种类型要有的东西", out)
         self.assertNotIn("--map", out)
 
+    def test_a_template_holding_work_items_is_not_ready(self):
+        _, fd = fake_feishu(self.spec)
+        held = SPACE_KEYS["types"]["same_seq"]["type_key"]
+        fake_run, calls = self.fake_cli(fd, held=(held,))
+        code, out = self.with_cli(fake_run, setup.check_template, None, None)
+        self.assertEqual(code, 1)
+        self.assertIn("| 模板空间 | 有工作项：同序列需求 |", out)
+        self.assertEqual(len([c for c in calls if "query" in c]), len(self.spec.work_items()))
+
     def test_template_command_takes_live_or_not(self):
         _, fd = fake_feishu(self.spec)
         fake_run, _ = self.fake_cli(fd)
@@ -2605,6 +2617,14 @@ class TemplateSpaceTest(ProjectCase):
         with self.assertRaises(setup.SetupError) as ctx:
             self.with_cli(fake_run, setup.check_template, self.tmp, None)
         self.assertIn("feishu.template_space", str(ctx.exception))
+
+    def test_multi_line_text_reported_as_text_passes(self):
+        ids, fd = fake_feishu(self.spec)
+        for t in fd["types"].values():
+            for f in t["fields"]:
+                if f["name"] in ("需求复述", "承接范围"):
+                    f["field_type"] = "text"                  # how meta-fields reports 多行文本
+        self.assertEqual(setup.bind(self.spec, ids, fd, {}), [])
 
     def test_states_missing_from_a_flow(self):
         ids, fd = fake_feishu(self.spec)

@@ -22,8 +22,9 @@ records the space without a binding time.
 
 template checks the space that project spaces are copied from (feishu.template_space
 in the task file, else std_template): its types, states, roles, fields and options
-must carry the rules' own names, so that a copy binds without --map. It always
-reads Feishu (--live is accepted, as for feishu) and writes nothing.
+must carry the rules' own names, so that a copy binds without --map, and it must
+hold no work items, since it is only a copy source. It always reads Feishu (--live
+is accepted, as for feishu) and writes nothing.
 Python 3.9 standard library only.
 """
 import argparse
@@ -1018,8 +1019,9 @@ def normalise_ids(raw):
 FIELD_TYPES = {"select": "单选", "multi_select": "多选", "text": "单行文本", "multi_text": "多行文本", "date": "日期",
                "link": "链接", "number": "数字", "bool": "开关", "user": "人员", "workitem_related_select": "关联工作项"}
 # Field type names a space may report for each rule type. A name outside all of them is not judged.
+# meta-fields reports 多行文本 as text, the same as 单行文本, so text passes for multi_text too.
 FIELD_TYPE_ALIASES = {"select": {"select", "radio"}, "multi_select": {"multi_select", "multi-select", "checkbox"},
-                      "text": {"text"}, "multi_text": {"multi_text", "multi-text", "multi_pure_text"},
+                      "text": {"text"}, "multi_text": {"multi_text", "multi-text", "multi_pure_text", "multi-pure-text", "text"},
                       "date": {"date"}, "link": {"link"}, "number": {"number"}, "bool": {"bool", "switch"},
                       "user": {"user"}, "workitem_related_select": {"workitem_related_select", "work_item_related_select"}}
 KNOWN_FIELD_TYPES = set().union(*FIELD_TYPE_ALIASES.values())
@@ -1445,7 +1447,8 @@ def feishu(target, maps, live, apply):
 
 
 def check_template(target, space):
-    """Check a space as the template project spaces are copied from. Reads Feishu, writes nothing."""
+    """Check a space as the template project spaces are copied from: the rules' names, and no
+    work items, since the template is only a copy source. Reads Feishu, writes nothing."""
     spec = orgspec.OrgSpec()
     if not space:
         task = (load_json_file(os.path.join(target, "spec", "task.json")) or {}).get("feishu") or {} if target else {}
@@ -1459,6 +1462,20 @@ def check_template(target, space):
         shutil.rmtree(export_dir, ignore_errors=True)
     ids = {"meegle": {}}
     problems = bind(spec, ids, fd, {}, template=True)
+    held = []
+    for wid, slot in ids["meegle"]["types"].items():
+        mql = "SELECT `work_item_id` FROM `%s`.`%s` LIMIT 1" % (hit.get("project_key"), slot["type_key"])
+        try:
+            rows = ledger.query_rows(cli_json(["meegle", "workitem", "query", "--project-key", hit.get("project_key"),
+                                               "--mql", mql, "--format", "json"]))
+        except (SetupError, ledger.LedgerError) as e:
+            print("提醒：没能查%s里有没有工作项：%s" % (spec.term("wi", wid), e))
+            continue
+        if rows:
+            held.append(spec.term("wi", wid))
+    if held:
+        problems.append(["模板空间", "有工作项：%s" % "、".join(held),
+                         "模板只当复制源，不放工作项、不跑项目：工作项放到项目空间里，模板里的请研究员在网页上删掉"])
     print("模板空间“%s”（simple_name %s，project_key %s）。只读了飞书，没写任何文件。" % (
         hit.get("name"), hit.get("simple_name"), hit.get("project_key")))
     print()
