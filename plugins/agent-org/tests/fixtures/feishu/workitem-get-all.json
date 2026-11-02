@@ -1,0 +1,154 @@
+{
+  "pagination": {
+    "has_more": false,
+    "page_size": 100,
+    "total": 45
+  },
+  "work_item_attribute": {
+    "create_by": {
+      "key": "u_researcher",
+      "name": "研究员"
+    },
+    "create_time": "2026-11-01T10:37:43+08:00",
+    "owned_project": {
+      "key": "6ae56d2e2f1d0216b5b97cb2",
+      "name": "AutoResearch_Test",
+      "simple_name": "cn09lu"
+    },
+    "template": {
+      "id": 11093046,
+      "name": "默认任务包类型"
+    },
+    "update_time": "2026-11-01T10:43:02+08:00",
+    "updated_by": {
+      "key": "u_researcher",
+      "name": "研究员"
+    },
+    "work_item_id": "7151870875",
+    "work_item_mod": "状态流",
+    "work_item_name": "下发包（Product-p2-01）：AutoResearch 的需求文档",
+    "work_item_status": {
+      "key": "Not started",
+      "name": "待开工"
+    },
+    "work_item_type": {
+      "key": "6ae687b383e512df18483426",
+      "name": "任务包"
+    }
+  },
+  "work_item_fields": [
+    {
+      "key": "archiving_status",
+      "name": "是否完成",
+      "value": "false"
+    },
+    {
+      "key": "auto_number",
+      "name": "自增数字",
+      "value": "1"
+    },
+    {
+      "key": "current_status_operator",
+      "name": "当前负责人",
+      "value": null
+    },
+    {
+      "key": "current_status_operator_role",
+      "name": "当前状态授权角色",
+      "value": [
+        {
+          "label": "研究员",
+          "value": "role_6ae56d2e2f1d0216b5b97cb2_6ae687b383e512df18483426_role_b66c84"
+        }
+      ]
+    },
+    {
+      "key": "is_frozen",
+      "name": "是否冻结",
+      "value": "false"
+    },
+    {
+      "key": "start_time",
+      "name": "创建时间",
+      "value": {
+        "iso_time": "2026-11-01T10:37:43+08:00",
+        "timestamp": 1793500663017
+      }
+    },
+    {
+      "key": "template_version",
+      "name": "流程版本",
+      "value": "3"
+    },
+    {
+      "key": "updated_at",
+      "name": "更新时间",
+      "value": {
+        "iso_time": "2026-11-01T10:43:01+08:00",
+        "timestamp": 1793500981727
+      }
+    },
+    {
+      "key": "field_021dfb",
+      "name": "资源上限",
+      "value": "0"
+    },
+    {
+      "key": "field_0d2446",
+      "name": "已用资源",
+      "value": "0"
+    },
+    {
+      "key": "field_0f7bc1",
+      "name": "资源声明",
+      "value": "不用 GPU；研究员访谈两次，每次一小时（待研究员确认）"
+    },
+    {
+      "key": "field_1297a2",
+      "name": "负责会话",
+      "value": "Product-p1-01"
+    },
+    {
+      "key": "field_3827a2",
+      "name": "所属项目",
+      "value": {
+        "id": 7152274970,
+        "name": "AutoResearch"
+      }
+    },
+    {
+      "key": "field_46c346",
+      "name": "截止时间",
+      "value": {
+        "iso_time": "2026-11-14T20:00:00+08:00",
+        "timestamp": 1794657600000
+      }
+    },
+    {
+      "key": "field_5c14c6",
+      "name": "主文档",
+      "value": "https://example.feishu.cn/wiki/wikNodeMainDoc0001"
+    },
+    {
+      "key": "field_9e236a",
+      "name": "序列",
+      "value": {
+        "label": "产品",
+        "value": "kt__2p55u"
+      }
+    },
+    {
+      "key": "field_b371a4",
+      "name": "发出方",
+      "value": "Product-p2-01"
+    },
+    {
+      "key": "field_d96adf",
+      "name": "包类型",
+      "value": {
+        "label": "下发包",
+        "value": "4fz3p7_36"
+      }
+    }
+  ]
+}

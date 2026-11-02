@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "document": {
+      "content": "<fragment mode=\"range\" requested-end=\"doxcnakjeLdey6R5sMps4TyITGg\" requested-start=\"doxcnnyQfTdXSmSuMyN3ajvOmgh\"><h2 id=\"doxcnnyQfTdXSmSuMyN3ajvOmgh\">状态包</h2><h3 id=\"doxcnEGxW80i812eomiXRzphwpb\">简介</h3><p id=\"doxcn1ypmY4YrbaNwZh81DmMOmg\">产品 +2 把需求文档阶段交给产品 +1，尚未开工。</p><h3 id=\"doxcnbekb39JIDve3UQvcRZ3did\">当前状态</h3><p id=\"doxcnO9aGirB2M4m3p5vnh3co07\">待开工。负责会话 Product-p1-01，已用资源 0，截止 2026-11-14。</p><h3 id=\"doxcnXViHbz4A5NrAVsnK8PxLZc\">近期变化</h3><ul><li id=\"doxcnmHdWw6VkLRfTlaa3aH9zig\">2026-10-31：下发包发出，工作项 #7151870875 建立。</li></ul><h3 id=\"doxcn5dUsPmJ5EjcixidWgBjE0g\">风险</h3><ul><li id=\"doxcnKewCCgZsGYE6Lb17z1h9Dd\">立项单还是空的，研究问题、目标用户这些上游依据不足，需求文档可能要返工。</li><li id=\"doxcnm3kiNhVu6Y7yOgNWnLzddd\">需求文档模板还没建，验收时只能对照本包的验收标准。</li></ul><h2 id=\"doxcnakjeLdey6R5sMps4TyITGg\">交接记录</h2></fragment>",
+      "document_id": "docxMainDoc0001",
+      "revision_id": 3
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "state_key": "Not started",
+  "state_name": "待决定",
+  "transition": [
+    {
+      "confirm_form": [
+        {
+          "class": "field",
+          "key": "field_899dbd",
+          "name": "决定内容"
+        },
+        {
+          "class": "field",
+          "key": "field_c9def8",
+          "name": "决定人"
+        }
+      ],
+      "id": 40176773,
+      "state_key": "In Progress",
+      "state_name": "已决定"
+    },
+    {
+      "confirm_form": null,
+      "id": 40176774,
+      "state_key": "YLYuYRlqG",
+      "state_name": "已过期"
+    }
+  ]
+}

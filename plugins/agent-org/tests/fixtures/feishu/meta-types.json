@@ -1,0 +1,88 @@
+{
+  "list": [
+    {
+      "api_name": "story",
+      "enable_model_resource_lib": false,
+      "is_disable": 1,
+      "name": "需求",
+      "type_key": "story"
+    },
+    {
+      "api_name": "issue",
+      "enable_model_resource_lib": false,
+      "is_disable": 1,
+      "name": "缺陷",
+      "type_key": "issue"
+    },
+    {
+      "api_name": "version",
+      "enable_model_resource_lib": false,
+      "is_disable": 1,
+      "name": "版本",
+      "type_key": "version"
+    },
+    {
+      "api_name": "sprint",
+      "enable_model_resource_lib": false,
+      "is_disable": 1,
+      "name": "迭代",
+      "type_key": "sprint"
+    },
+    {
+      "api_name": "chart",
+      "enable_model_resource_lib": false,
+      "is_disable": 2,
+      "name": "图表",
+      "type_key": "chart"
+    },
+    {
+      "api_name": "sub_task",
+      "enable_model_resource_lib": false,
+      "is_disable": 2,
+      "name": "任务",
+      "type_key": "sub_task"
+    },
+    {
+      "api_name": "project",
+      "enable_model_resource_lib": false,
+      "is_disable": 2,
+      "name": "项目",
+      "type_key": "6ae6867320c5edfd72c23f2c"
+    },
+    {
+      "api_name": "package",
+      "enable_model_resource_lib": false,
+      "is_disable": 2,
+      "name": "任务包",
+      "type_key": "6ae687b383e512df18483426"
+    },
+    {
+      "api_name": "cross_request",
+      "enable_model_resource_lib": false,
+      "is_disable": 2,
+      "name": "跨序列需求",
+      "type_key": "6ae6881809318d94fd50e32a"
+    },
+    {
+      "api_name": "review",
+      "enable_model_resource_lib": false,
+      "is_disable": 2,
+      "name": "送审",
+      "type_key": "6ae6884c9a64272328e80b76"
+    },
+    {
+      "api_name": "decision",
+      "enable_model_resource_lib": false,
+      "is_disable": 2,
+      "name": "决策",
+      "type_key": "6ae688662a2427d9b87b6850"
+    },
+    {
+      "api_name": "feedback",
+      "enable_model_resource_lib": false,
+      "is_disable": 2,
+      "name": "反馈",
+      "type_key": "6ae6887e28f06150d8c9346a"
+    }
+  ]
+}

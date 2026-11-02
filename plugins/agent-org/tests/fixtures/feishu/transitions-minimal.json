@@ -1,0 +1,12 @@
+{
+  "state_key": "Not started",
+  "state_name": "待开工",
+  "transition": [
+    {
+      "confirm_form": null,
+      "id": 40176602,
+      "state_key": "In Progress",
+      "state_name": "执行中"
+    }
+  ]
+}

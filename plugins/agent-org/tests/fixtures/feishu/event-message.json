@@ -1,0 +1,14 @@
+{
+  "type": "im.message.receive_v1",
+  "event_id": "ev_1",
+  "message_id": "om_1",
+  "id": "om_1",
+  "chat_id": "oc_1",
+  "chat_type": "p2p",
+  "message_type": "text",
+  "content": "#7151870875 访谈记录补上了",
+  "sender_id": "ou_researcher",
+  "sender_type": "user",
+  "create_time": "1793500000000",
+  "timestamp": "1793500000000"
+}

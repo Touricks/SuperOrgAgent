@@ -1,0 +1,16 @@
+{
+  "form_items": [
+    {
+      "class": "field",
+      "field_type_key": "text",
+      "finished": false,
+      "key": "field_899dbd"
+    },
+    {
+      "class": "field",
+      "field_type_key": "user",
+      "finished": false,
+      "key": "field_c9def8"
+    }
+  ]
+}

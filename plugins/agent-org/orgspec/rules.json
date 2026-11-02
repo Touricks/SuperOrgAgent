@@ -1,0 +1,1426 @@
+{
+  "schema_version": 1,
+  "ranks": [
+    {
+      "id": "p0",
+      "given": "任务目标、验收标准、执行方法、执行资源上限",
+      "outputs": "产物，以及它满足验收标准的证据；或者一份\"这个方法做不到\"的报告",
+      "context": "单个任务，做完就释放",
+      "escalate": "方法走不通、超预算、发现验收标准本身有问题"
+    },
+    {
+      "id": "p1",
+      "given": "任务目标、验收标准、执行资源上限",
+      "outputs": "方法和派给 +0 的任务表单；资源上限内的转向决定；汇总后的结论",
+      "context": "单个项目阶段，靠任务台账跨会话延续",
+      "escalate": "需要改目标或验收标准；当前资源下没有解"
+    },
+    {
+      "id": "p2",
+      "given": "一个模糊需求或一类问题",
+      "outputs": "派给 +1 的目标和验收标准；本序列的任务包模板",
+      "context": "跨项目阶段，长期维护",
+      "escalate": "跨序列冲突"
+    }
+  ],
+  "general_rules": [
+    {
+      "head": "执行结果先送审，再交上一级。",
+      "body": "没有外部反馈时，模型自查往往无效。看起来的自我纠错提升，常常靠标准答案来决定何时停止纠错；没有标准答案时，效果持平甚至下降。模型也常常没做端到端测试，就把功能标成完成。所以执行结果先送质量序列验收，拿到验收结论后，再连同交付物交给本序列的上一级；上一级再对照任务包的目标，确认任务是否完成。质量验收的是证据能不能信，上一级确认的是任务有没有完成，两次看的东西不同。"
+    },
+    {
+      "head": "“做不到”是合法产出。",
+      "body": "如果验收只看做没做成，agent 会倾向于硬交一个结果。只按准确率打分的评测，在鼓励模型猜答案：从不弃答的模型，准确率未必更高，错误率却可能高出好几倍。验收标准因此要给有依据的“做不到”留出位置，对自信的错误罚得比弃答更重。+0 报告“这个方法做不到”、+1 报告“当前资源下无解”，这两条都要明确写进职级定义；报告里要写明缺的是哪类资源或条件，以及给上一级的建议办法。"
+    },
+    {
+      "head": "职级授给“配置 × 任务类型”，依据是可靠性。",
+      "body": "人的职级跟着人走。agent 的职级应该跟着具体配置（模型、提示词、工具）和任务类型走，按它在这类任务上的历史成功率来定，而且看的是高可靠度下的表现。要求的成功率越高，模型能可靠完成的任务就越短；同一任务重复跑多次，全部成功的比例也远低于单次的成功率。模型能力又变化得快，所以授权要按新的评测结果定期重新核定。"
+    }
+  ],
+  "only_humans": [
+    "去现场：访谈真实用户，拿到真实数据。",
+    "签字：需求文档、规格、权限策略、质量和算法序列之间的争议、超预算、不可逆的对外动作、停止或转向、发给导师的材料。",
+    "划定授权边界：哪些决定由 agent 自己做，哪些必须进入决策队列。",
+    "在几个都说得通的方向里选一个。"
+  ],
+  "levels": {
+    "researcher": 3,
+    "mentor": 4
+  },
+  "sequences": [
+    {
+      "id": "product",
+      "abbrev": "Product",
+      "title": "问题定义与转化",
+      "focus": "开题前写下“值不值得做、做成了算什么”，做完后看真实用户的行为",
+      "intro": "互联网 PM 的常见工作内容包含 \"对齐需求→撰写需求文档→推动新功能上线→用户调研->分析指标并提出潜在新需求\"。智能体组织中，需求对齐和指标分析尤其重要。任务执行前就要写下成功判据，因为事后定的标准容易向结果靠拢。做完后要看真实的用户行为指标分析，因为用户的感受和实际效果可能方向相反。\n\n面向导师的汇报材料不由产品序列准备，交给外联序列",
+      "ranks": {
+        "p0": {
+          "label": "+0",
+          "given": "来自产品 +1 的{pkg:request}：调研对象、要收集的字段、访谈提纲",
+          "outputs": [
+            "给质量 +2：{pkg:review}，列出每份材料的来源和收集方式，供形式核查",
+            "给产品 +1：{pkg:delivery}，附验收结论；内容是整理好的访谈记录、现状工作流、失败案例和现成数据，试点期间加上使用日志分析"
+          ],
+          "escalate": "拿不到数据、调研对象和问题对不上"
+        },
+        "p1": {
+          "label": "+1",
+          "given": "来自产品 +2 的{pkg:request}：当前关注的研究问题、需求文档框架、必须覆盖的判据",
+          "outputs": [
+            "给产品 +0：{pkg:request}，写明调研对象、字段和访谈提纲",
+            "给质量 +2：{pkg:review}，送审试点结论，比如“工程师在没人提醒时主动使用”，附使用日志和合入记录",
+            "给产品 +2：{pkg:delivery}，附验收结论；内容是需求文档草案（目标用户、现状基线、成功判据、停止条件、试点方案）、基线的证据、判断的变化和待决事项"
+          ],
+          "escalate": "基线显示问题不值得做、判据需要修改"
+        },
+        "p2": {
+          "label": "+2",
+          "given": "来自 +3 的实验室方向和资源",
+          "outputs": [
+            "给产品 +1：{pkg:request}，写明当前关注的研究问题、需求文档框架、必须覆盖的判据和授权范围",
+            "给算法 +2：{pkg:request}，写明需求文档里会约束规格的判据、成功阈值和停止条件",
+            "给 +3：{pkg:decision}，请求签字需求文档和试点结论。需求文档和试点结论需由 +3 签字。用户访谈需由 +3 去做。"
+          ],
+          "escalate": "项目之间争抢资源"
+        }
+      },
+      "notes": "举例：编写一个优化智能客服agent的优化器\n\n- 将值不值得做、做成的标准是什么写入任务台账： \n\n    - \"值不值得做\"包含：谁会用，他现在怎么做，代价有多大。比如调研发现，那个团队每改一版客服 agent，都要手工调提示词、跑评测、翻失败案例，一轮要两天。如果优化器能在几小时内、以可接受的 API 成本做到同样的效果，就值得做。\n\n    - \"做成了算什么\"要在动手之前写下来。比如在对方的评测集上，6 小时、200 美元以内，分数达到或超过手调的版本；改完的提示词，对方工程师能看懂。\n\n- 做完后一头：把产品放进真实场景，看有没有人真用：把优化器交给两三个真实团队用一个月。\"真用\"看行为，不看评价： \n\n    - 下次改 agent 时，他们有没有不用提醒就主动去跑优化器？\n\n    - 优化器给出的改动，有没有合进线上版本？\n\n    - 他们有没有提很具体的抱怨？"
+    },
+    {
+      "id": "alg",
+      "abbrev": "Alg",
+      "title": "定义解决方案的任务分解策略",
+      "focus": "把问题写成可检验的规格，解释方法为什么有效、在哪里失效",
+      "intro": "互联网算法序列通常在固定目标上提指标，离线评估通过后上线做 AB 实验。智能体组织里，推导、实现、调参、跑消融大多交给 agent，算法序列的重心落在两件事上：设计对特定问题可检验的验收标准，以及解释方法为什么有效、在哪里失效。",
+      "ranks": {
+        "p0": {
+          "label": "+0",
+          "given": "来自算法 +1 的{pkg:request}：方法变体、实验配置、种子、要跑的消融",
+          "outputs": [
+            "给质量 +2：{pkg:review}，列出每个变体的结果和运行 ID，包括失败的",
+            "给算法 +1：{pkg:delivery}，附验收结论，逐条对照验收标准，写明基线复现情况；发现规格能被绕过时附复现步骤"
+          ],
+          "escalate": "结果和预期差距很大、发现规格能被绕过"
+        },
+        "p1": {
+          "label": "+1",
+          "given": "来自算法 +2 的{pkg:request}：研究假设、已签字的规格、实验设计标准、授权范围",
+          "outputs": [
+            "给算法 +0：{pkg:request}，写明要跑的变体、配置、种子和验收标准",
+            "给质量 +2：{pkg:review}，送审阶段结论和方法结论，附完整台账",
+            "给算法 +2：{pkg:delivery}，附验收结论，写明证伪实验的结论、机制解释、适用边界、判断的变化和需要修改规格的地方"
+          ],
+          "escalate": "假设被证伪、需要修改规格"
+        },
+        "p2": {
+          "label": "+2",
+          "given": "来自 +3 的研究方向；产品 +2 的{pkg:request}",
+          "outputs": [
+            "给算法 +1：{pkg:request}，写明研究假设、已签字的规格和实验设计标准",
+            "给产品 +2：{pkg:delivery}，说明需求文档里的约束怎样落进规格，或者指出冲突",
+            "给工程 +2：{pkg:request}，写明要实现的搜索流程、运行记录格式和重复次数",
+            "给基础设施 +2：{pkg:request}，写明规格里要由运行环境强制执行的约束",
+            "给 +3：{pkg:decision}，请求签字规格"
+          ],
+          "escalate": "规格和需求文档冲突"
+        }
+      },
+      "notes": "- 实验规格(specification)的定义：把研究问题写成一份精确、可以检验的定义；在LLM实验中，即把以下参数定义清楚，落成文档并遵守： \n\n    - **可修改的超参数**：只能改模型结构、特征处理和训练超参，评测脚本和测试集不在其中。\n\n    - **评测标准**：留出集上的 AUC，固定 3 个随机种子取平均。\n\n    - **实验资源**：每个快照最多 2 张卡、1 小时，整个项目 300 GPU 小时。\n\n    - **测试集**：评测脚本和测试集只读，外层优化器看不到测试集。"
+    },
+    {
+      "id": "rnd",
+      "abbrev": "RnD",
+      "title": "执行算法序列设计的实验方案",
+      "focus": "按规格实现实验代码，每个分数能重跑，中断能续跑",
+      "intro": "长任务一定会跨越多个上下文窗口，因此断点续跑和状态记录要做进实验流程。一种可行的做法是：第一个会话专门搭环境，写好启动脚本和进度文件，做一次初始 git 提交，把需求写成功能清单保存在云端，所有功能初始都标为“未通过”；之后每个会话先读 git 日志和进度文件，跑一遍基本的端到端测试，再挑一个未完成的功能来做。\n\n智能体组织里代码大多由 agent 写，工程序列按算法序列的规格实现实验代码，重心是：\n\n- 每个分数都需要能按照实验方案重跑出来。\n\n- 对于耗时任务，中断后能从断点接着跑。\n\n- 实验需要的资源、挂载和工具要求写进工作项，由基础设施序列预检，工程不改环境配置。",
+      "ranks": {
+        "p0": {
+          "label": "+0",
+          "given": "来自工程 +1 的{pkg:request}：要实现的组件、接口和测试要求",
+          "outputs": [
+            "给质量 +2：{pkg:review}，附测试通过的记录，供形式核查",
+            "给工程 +1：{pkg:delivery}，附验收结论，写明代码位置、测试覆盖和已知限制"
+          ],
+          "escalate": "需求和现有架构冲突、需要改环境才能实现"
+        },
+        "p1": {
+          "label": "+1",
+          "given": "来自工程 +2 的{pkg:request}：实现范围、规格、预算、可复用的共享组件",
+          "outputs": [
+            "给工程 +0：{pkg:request}，写明组件、接口和测试要求",
+            "给质量 +2：{pkg:review}，送审可复现性，比如“任意分数凭运行 ID 可以重跑，误差在种子波动之内”",
+            "给工程 +2：{pkg:delivery}，附验收结论，写明实验流程说明、运行记录样例、资源实际用量和未解决的技术债",
+            "给基础设施（经工作项字段）：资源和工具声明，供预检读取"
+          ],
+          "escalate": "预算不够跑完规格要求的重复次数"
+        },
+        "p2": {
+          "label": "+2",
+          "given": "来自算法 +2 的{pkg:request}；实验室所有项目的实验需求",
+          "outputs": [
+            "给工程 +1：{pkg:request}，写明实现范围、共享组件和代码规范",
+            "给算法 +2：{pkg:delivery}，接单时确认实现范围，交付时说明实现和规格的对应关系与偏差",
+            "给基础设施 +2：{pkg:request}，写明新增的资源、挂载和工具能力"
+          ],
+          "escalate": "组件改动会影响多个项目"
+        }
+      },
+      "notes": ""
+    },
+    {
+      "id": "infra",
+      "abbrev": "Infra",
+      "title": "将设约束的和被约束的会话进行隔离",
+      "focus": "开工前预检环境和工具，执行资源和权限约束，维护工具可用性",
+      "intro": "互联网公司的架构、SRE 和安全序列，分别管系统设计、线上稳定和权限漏洞。在智能体组织里，基础设施服务所有序列：算法和质量要算力，项目管理和外联要用飞书平台，每个会话都要调用模型 API。在工程会话执行前，要先有运行条件验证模块，确认依赖与服务正常；要防止 agent 修改验收测试、联网复制参考答案、伪造评分。这些都不是写实验代码的工程序列agent该兼顾的事。\n\n工具好不好用，影响所有会话的效率。可以专门安排一个测试工具的 agent：拿到有缺陷的工具时先试用，再改写工具说明来避开失败，后续 agent 完成任务会快得多。糟糕的工具说明会把 agent 引到完全错误的方向，这类工作放在基础设施序列最合适。\n\n因此基础设施序列agent的重心是：\n\n- 开工前预检：依赖、算力、数据挂载、模型 API、飞书工具的登录状态都正常，才允许开工。\n\n- 执行约束：计时、配额、挂载方式、命令白名单由基础设施设定和执行\n\n- 维护工具可用性：统计工具调用的失败，修订工具封装和工具说明",
+      "ranks": {
+        "p0": {
+          "label": "+0",
+          "given": "来自基础设施 +1 的{pkg:request}：环境需求和预检清单",
+          "outputs": [
+            "给质量 +2：{pkg:review}，约束第一次配置好时，送审越权测试的步骤和结果",
+            "给基础设施 +1：{pkg:delivery}，附验收结论，写明环境配置和预检脚本；预检失败时写明失败项、原因和建议的修复办法",
+            "给工作项：每次开工前的预检结果"
+          ],
+          "escalate": "预检失败且无法自动修复、凭证快过期"
+        },
+        "p1": {
+          "label": "+1",
+          "given": "来自基础设施 +2 的{pkg:request}：项目配额、已签字的权限策略、预检清单",
+          "outputs": [
+            "给基础设施 +0：{pkg:request}，写明要配置的环境和预检项",
+            "给基础设施 +2：{pkg:delivery}，附验收结论，写明资源用量、工具调用失败的分类统计、已修订的工具封装和越权尝试记录"
+          ],
+          "escalate": "配额不够、某个工具持续失败、发现越权尝试"
+        },
+        "p2": {
+          "label": "+2",
+          "given": "来自工程、算法 +2 的{pkg:request}；实验室所有项目的运行需求",
+          "outputs": [
+            "给基础设施 +1：{pkg:request}，写明项目配额、权限策略和预检清单",
+            "给工程、算法 +2：{pkg:delivery}，说明哪些需求已经就绪、哪些约束已经由运行环境强制执行",
+            "给 +3：{pkg:decision}，请求签字权限策略和身份方案"
+          ],
+          "escalate": "任何权限策略变更"
+        }
+      },
+      "notes": ""
+    },
+    {
+      "id": "quality",
+      "abbrev": "Quality",
+      "title": "评测应由独立会话负责",
+      "focus": "独立验收，所有实验进台账，评测集本身也要审计",
+      "intro": "互联网质量保障关心功能是否正确、上线会不会出事故。智能体组织里，质量序列需要回答“这个结论能不能信”。在实际实验中，模型自查往往无效，而且会明知不符合意图也去钻评测的空子。质量序列因此要做到上下文隔离。\n\n此外，评测集本身也会出错。人工逐条审查一个公开评测集时，常会发现不少样本问题描述不清，或者单元测试会误判正确的解法，要剔除相当一部分才能用。\n\n因此质量序列agent的重心是：\n\n- 验收独立于产出方。\n\n- 所有实验结果都进任务账本，防止只报最好的结果。\n\n- 评测集本身也要审计。",
+      "ranks": {
+        "p0": {
+          "label": "+0",
+          "given": "来自质量 +1 的{pkg:request}：复现范围、种子、留出集、红队检查项",
+          "outputs": [
+            "给质量 +1：{pkg:delivery}，写明复现结果、留出集、错误分析和红队检查记录；质量序列内部验收，不送审"
+          ],
+          "escalate": "发现数据泄漏或评测脚本漏洞"
+        },
+        "p1": {
+          "label": "+1",
+          "given": "来自质量 +2 的{pkg:request}：待核查的{pkg:review}、适用的证据标准、核查深度",
+          "outputs": [
+            "给质量 +0：{pkg:request}，写明复现范围、种子、留出集和红队检查项",
+            "给质量 +2：{pkg:delivery}，写明逐项核查结果和建议结论（接受、缩小或否决）"
+          ],
+          "escalate": "和送审方意见不一致"
+        },
+        "p2": {
+          "label": "+2",
+          "given": "来自其他序列的{pkg:review}；全实验室的项目",
+          "outputs": [
+            "给质量 +1：{pkg:request}，写明待核查的结论、适用的证据标准和核查深度（形式核查、抽样复核或完整核查）",
+            "给送审方及其上一级：{pkg:verdict}，写明结论、下游可以使用的结论原文、发现的问题和结论失效的条件",
+            "给送审方所在序列的 +2：{pkg:request}，比如核查中发现规格漏洞时提出修订需求",
+            "给 +3：{pkg:decision}，请求裁决争议，或签字证据标准的变更"
+          ],
+          "escalate": "证据标准需要变更"
+        }
+      },
+      "notes": ""
+    },
+    {
+      "id": "pmo",
+      "abbrev": "PMO",
+      "title": "任务账本进飞书项目，任务包进飞书文档",
+      "focus": "任务包、信息路由、阻塞与恢复、管理人的决策队列；维护飞书项目里的台账和飞书文档里的任务包",
+      "intro": "互联网公司常设PMO，负责项目排期、对齐和风险跟踪。人类团队里，很多信息靠开会和闲聊就能同步，但agent 之间没有共享记忆，如果一条信息没写进台账、没送到对应的会话，对其他 agent 来说就不存在。\n\nAgent会话交接时只传递子任务描述，信息大概率不够用。比如把“做一个横版小游戏”拆给两个子 agent，一个做滚动背景，一个做角色。两个子 agent 只拿到自己的子任务，看不到原始任务，做出来的背景和角色风格对不上，拼起来也不像一个游戏。把所有任务塞进一个会话也不行：输入越长，模型表现越差，复述文本这样的简单任务也不例外，而且远没到上下文上限时就开始下降。\n\n因此，要支持多个执行会话并行工作，需要设一个路由会话维护任务账本、分发信息。执行任务的会话要隔离，上下文才不会过长；交接时又要带上足够的背景，尤其是那些会约束其他会话的决策。面向用户的会话应只有一个会话，用于将用户的信息路由给具体的任务执行会话，而执行任务的会话可以有很多；任务账本记录任务的要求、状态、新增信息和产出文件，路由靠它判断补充信息归哪个任务。\n\n因此项目管理序列agent的重心是：\n\n- 按模板生成任务包，维护每个工作项的主文档。\n\n- 把新信息送到受影响的会话。\n\n- 阻塞时挂起，条件满足后恢复。\n\n- 把需要人决定的事，整理成研究员每天的决策队列。\n\n- 维护飞书项目里的任务台账和飞书文档里的任务包，负责会话之间的云端交接。\n\n它负责状态和分发。结论对不对由质量序列判断，规格由算法序列修改，工具能不能用由基础设施保证。",
+      "ranks": {
+        "p0": {
+          "label": "+0（书记员）",
+          "given": "来自项目管理 +1 的{pkg:request}：要建的工作项、要分发的信息、要归档的文档；台账字段规范和文档模板",
+          "outputs": [
+            "给所有序列：按模板生成的主文档和工作项更新",
+            "给项目管理 +1：{pkg:delivery}，写明写入结果和异常清单（归属不明的信息、台账和文档的不一致、写入失败）"
+          ],
+          "escalate": "信息不知道该归给谁、台账和文档对不上、写入连续失败"
+        },
+        "p1": {
+          "label": "+1（路由）",
+          "given": "来自项目管理 +2 的{pkg:request}：台账结构、路由规则、决策队列格式；入口转来的待路由信息",
+          "outputs": [
+            "给项目管理 +2：路由结论，逐条写明命中路由决策表的哪一行、依据和动作；判断不了的标明上交",
+            "给项目管理 +2：每日决策队列，汇总各序列的{pkg:decision}，每件附选项和建议",
+            "给项目管理 +0：{pkg:request}，写明要建的工作项、要分发的信息和要归档的文档",
+            "给项目管理 +2：{pkg:delivery}，写明关键路径、阻塞统计和交接失败的案例"
+          ],
+          "escalate": "关键路径延误、某个会话长时间没有进展"
+        },
+        "p2": {
+          "label": "+2（入口）",
+          "given": "研究员的信息和指示；其他序列 +2 的{pkg:request}（新字段、新视图、新模板）",
+          "outputs": [
+            "给研究员：每日决策队列，紧急程度为“插队”的随时交，每件附选项和建议",
+            "给对应序列的 +2：研究员拍板后的新任务和补充信息",
+            "给项目管理 +1：{pkg:request}，写明台账结构、路由规则和决策队列格式；以及要路由的信息",
+            "给其他序列 +2：{pkg:delivery}，答复字段、视图和模板的需求",
+            "给研究员：{pkg:decision}，台账结构和任务包模板的变更属于组织规则变更"
+          ],
+          "escalate": "改动会影响所有序列；研究员的一句话判断不了归属"
+        }
+      },
+      "notes": "插件的入口安排：项目管理 +2 是研究员唯一的入口，以主会话的身份运行；路由（+1）按路由决策表给出结论，不直接派发序列 +2；书记员（+0）是台账和文档唯一的写入方。研究员可以按阶段直接和主责序列的 +2 开聚焦会话，谈定的事由那个 +2 写成{pkg:decision}交回入口，书记员记成“已决定”的决策工作项。"
+    },
+    {
+      "id": "liaison",
+      "abbrev": "Liaison",
+      "title": "节省leader的注意力",
+      "focus": "周报、月报和决策备忘；记录并确认项目管理层的意见",
+      "intro": "Agent 组织里，执行方案的成本大幅下降，但和项目管理层的交互成本却没有降低。好的备忘录要用叙事结构写，这会迫使写的人想得更清楚，分清什么比什么更重要，所以写好一份四页备忘录比做二十页幻灯片更难。因此，好材料要花时间准备，交给产品序列顺带做，要么做不好，要么挤占产品对其工作的注意力。好的材料能让和leader的会议时间尽量多的花在决定而非进度对齐上。\n\n因此，这部分工作单独交给外联序列agent，它的重心是：\n\n- 按固定节奏准备周报、月报和决策备忘，让导师用最少的阅读做出决定。\n\n- 记录并解析导师的意见，确认理解无误后，交给项目管理序列路由。\n\n- 跟踪对导师做出的承诺。",
+      "ranks": {
+        "p0": {
+          "label": "+0",
+          "given": "来自外联 +1 的{pkg:request}：汇报模板、时间范围、台账查询条件、必须出现的事项",
+          "outputs": [
+            "给外联 +1：{pkg:delivery}，写明周报草稿、会议记录和导师意见的原话"
+          ],
+          "escalate": "台账数据缺失或互相矛盾、要写进材料的结论还没有验收结论"
+        },
+        "p1": {
+          "label": "+1",
+          "given": "来自外联 +2 的{pkg:request}：这次汇报的目的（例行同步、需要决定或需要资源）、导师的关注点、模板",
+          "outputs": [
+            "给外联 +0：{pkg:request}，写明要查的时间范围和必须进入清单的事项",
+            "给外联 +2：{pkg:delivery}，写明导师的追问记录、意见解析结果和承诺的跟踪情况"
+          ],
+          "escalate": "导师意见和需求文档或规格冲突、意见含糊无法拆解"
+        },
+        "p2": {
+          "label": "+2",
+          "given": "来自 +3 的项目管理层关注点和汇报节奏",
+          "outputs": [
+            "给外联 +1：{pkg:request}，写明汇报目的、关注点清单和模板",
+            "给项目管理 +2：{pkg:request}，写明汇报要用的台账视图和字段",
+            "给 +3：{pkg:decision}，调整汇报节奏和模板"
+          ],
+          "escalate": "汇报节奏或模板需要调整"
+        }
+      },
+      "notes": ""
+    }
+  ],
+  "packages": [
+    {
+      "id": "request",
+      "direction": "本序列 +2 → +1（下发）；本序列 +1 → +0（执行）；本序列 +2 → 其他序列 +2（跨序列）",
+      "receiver_action": "规划并组织执行；照方法执行；决定接不接、怎么接",
+      "focus": "目标、逐条可检查的验收标准、资源和期限、会约束对方的决策、要交回的内容；方法只写给 +0，授权与边界只写给本序列的下一级",
+      "not_write": "接收方职责内的事：给 +1 和其他序列不写具体方法，给其他序列不写对方内部怎么做；给 +0 不写和任务无关的背景",
+      "kind": "request",
+      "creates_work_item": true,
+      "template": "request.md"
+    },
+    {
+      "id": "delivery",
+      "direction": "{pkg:request}的反方向",
+      "receiver_action": "确认任务完成；决定下一步；；确认理解，或接收交付",
+      "focus": "结论先行、逐条验收对照、验收结论链接；+1 交回时加状态包、机制和边界、判断的变化、待决事项；；跨序列先在接单时逐条复述需求、承接范围和冲突，交付时写偏差；；做不到时写原因和建议",
+      "not_write": "委托范围以外的判断；原始数据的罗列",
+      "kind": "reply",
+      "creates_work_item": false,
+      "answers": "request",
+      "template": "delivery.md"
+    },
+    {
+      "id": "review",
+      "direction": "任一序列 → 质量 +2",
+      "receiver_action": "判断结论能不能信",
+      "focus": "结论原文、用途、证据编号、完整台账、已知弱点",
+      "not_write": "推理过程和说服性文字",
+      "kind": "request",
+      "creates_work_item": true,
+      "template": "review.md"
+    },
+    {
+      "id": "verdict",
+      "direction": "质量 +2 → 送审方",
+      "receiver_action": "知道能说什么、要补什么",
+      "focus": "结论、可使用的结论原文、问题、失效条件、后续要求",
+      "not_write": "对送审方方法的改写建议",
+      "kind": "reply",
+      "creates_work_item": false,
+      "answers": "review",
+      "template": "verdict.md"
+    },
+    {
+      "id": "decision",
+      "direction": "任一序列 +2 → +3",
+      "receiver_action": "拍板",
+      "focus": "背景、选项和代价、建议、截止时间",
+      "not_write": "详细过程",
+      "kind": "request",
+      "creates_work_item": true,
+      "template": "decision.md"
+    }
+  ],
+  "relations": [
+    {
+      "id": "assign",
+      "from_rank": "p2",
+      "to_rank": "p1",
+      "same_sequence": true,
+      "accept_confirmation": "默认不需要"
+    },
+    {
+      "id": "execute",
+      "from_rank": "p1",
+      "to_rank": "p0",
+      "same_sequence": true,
+      "accept_confirmation": "不需要"
+    },
+    {
+      "id": "cross",
+      "from_rank": "p2",
+      "to_rank": "p2",
+      "same_sequence": false,
+      "accept_confirmation": "需要"
+    }
+  ],
+  "relation_matrix": [
+    {
+      "item": "目标、验收标准、资源和期限、继承的决策、交回要求",
+      "assign": "定",
+      "execute": "定",
+      "cross": "定"
+    },
+    {
+      "item": "授权与边界",
+      "assign": "定：哪些事可以自己定、哪些要上报",
+      "execute": "定：哪些东西不能碰、超过什么阈值上报",
+      "cross": "不定，由对方自己定"
+    },
+    {
+      "item": "本序列标准",
+      "assign": "定",
+      "execute": "定",
+      "cross": "不定，对方用自己的标准"
+    },
+    {
+      "item": "方法",
+      "assign": "不定",
+      "execute": "定",
+      "cross": "不定"
+    },
+    {
+      "item": "接单确认",
+      "assign": "默认不需要",
+      "execute": "不需要",
+      "cross": "需要"
+    }
+  ],
+  "handoff_rules": [
+    "跨序列的任务包，接收方一律是对方序列的 +2。+0、+1 需要别的序列配合时，写进交给本序列上一级的{pkg:delivery}，由本序列 +2 发跨序列的{pkg:request}。",
+    "送审是唯一允许任何一级直接跨序列交接的情况。质量 +2 按结论的用途决定核查深度：内部推进的常规产出做形式核查，只看证据是否齐全、能否追溯；影响项目范围的结论，做完整核查。",
+    "项目管理会话分发的是信息，不写任务包；由额外信息引出的新任务，经 +3 决定后交给对应序列的 +2。任务账本写入、开工预检这类操作只记在工作项里，不送审。",
+    "约束某个序列的规则，不经由这个序列转交。比如“评测协议只读”约束的是工程，应由算法 +2 直接发{pkg:request}给基础设施 +2。"
+  ],
+  "package_routes": [
+    {
+      "pkg": "request",
+      "rel": "assign",
+      "from": "本序列 +2",
+      "to": "本序列 +1",
+      "via": "派发"
+    },
+    {
+      "pkg": "request",
+      "rel": "execute",
+      "from": "本序列 +1",
+      "to": "本序列 +0",
+      "via": "派发"
+    },
+    {
+      "pkg": "request",
+      "rel": "cross",
+      "from": "本序列 +2",
+      "to": "其他序列 +2",
+      "via": "入口"
+    },
+    {
+      "pkg": "delivery",
+      "rel": "execute",
+      "from": "本序列 +0",
+      "to": "本序列 +1",
+      "via": "交回"
+    },
+    {
+      "pkg": "delivery",
+      "rel": "assign",
+      "from": "本序列 +1",
+      "to": "本序列 +2",
+      "via": "交回"
+    },
+    {
+      "pkg": "delivery",
+      "rel": "cross",
+      "from": "承接方 +2",
+      "to": "发起方 +2",
+      "via": "入口"
+    },
+    {
+      "pkg": "review",
+      "rel": null,
+      "from": "非质量序列的任一级",
+      "to": "质量 +2",
+      "via": "入口"
+    },
+    {
+      "pkg": "verdict",
+      "rel": null,
+      "from": "质量 +2",
+      "to": "送审方及其上一级",
+      "via": "入口"
+    },
+    {
+      "pkg": "decision",
+      "rel": null,
+      "from": "任一序列 +2",
+      "to": "研究员",
+      "via": "入口（决策队列）"
+    }
+  ],
+  "entry": {
+    "main_agent": "pmo-p2",
+    "router": "pmo-router",
+    "scribe": "pmo-scribe",
+    "queue_cadence": "紧急程度为“插队”的随时交，其余每天交一次",
+    "lead_by_phase": [
+      {
+        "phase": "搭设施",
+        "sequences": [
+          "infra"
+        ]
+      },
+      {
+        "phase": "设计",
+        "sequences": [
+          "product",
+          "alg"
+        ]
+      },
+      {
+        "phase": "执行",
+        "sequences": [
+          "rnd"
+        ]
+      },
+      {
+        "phase": "汇报前",
+        "sequences": [
+          "liaison"
+        ]
+      }
+    ],
+    "focus_rule": "研究员可以直接和当前阶段主责序列的 +2 开聚焦会话；谈定的事由这个 +2 写成{pkg:decision}交给项目管理 +2，书记员建成决策工作项并直接流转到“已决定”。没写进台账的决定不算数。"
+  },
+  "routing": [
+    {
+      "id": "R1",
+      "when": "带工作项 ID 或会话名的信息",
+      "test": "ID 存在，工作项未关闭",
+      "action": "comment_and_resume",
+      "detail": "在该工作项下加带会话标签的评论，恢复负责会话；该序列开着聚焦会话的，交给聚焦会话",
+      "mechanical": "yes"
+    },
+    {
+      "id": "R2",
+      "when": "没带 ID 的补充信息",
+      "test": "按工作项名称、字段和状态包只匹配到一项进行中的工作",
+      "action": "comment_and_resume",
+      "detail": "同 R1，并在评论里写明匹配依据",
+      "mechanical": "partial"
+    },
+    {
+      "id": "R3",
+      "when": "没带 ID 的补充信息",
+      "test": "匹配到多项，或一项也没有",
+      "action": "escalate",
+      "detail": "交项目管理 +2 判断",
+      "mechanical": "yes"
+    },
+    {
+      "id": "R4",
+      "when": "新任务",
+      "test": "无",
+      "action": "escalate_new_task",
+      "detail": "交项目管理 +2；研究员拍板后，由对应序列的 +2 发{pkg:request}",
+      "mechanical": "yes"
+    },
+    {
+      "id": "R5",
+      "when": "需要人拍板的事",
+      "test": "无",
+      "action": "queue_decision",
+      "detail": "建“待决定”的决策工作项，渠道填决策队列，进决策队列",
+      "mechanical": "yes"
+    },
+    {
+      "id": "R6",
+      "when": "聚焦会话交回的决定",
+      "test": "状态是“已决定”",
+      "action": "record_decision",
+      "detail": "建决策工作项并直接流转到“已决定”，渠道填研究员主动发起，通知受影响工作项的负责会话",
+      "mechanical": "yes"
+    },
+    {
+      "id": "R7",
+      "when": "各序列交回的包",
+      "test": "按包类型和关系",
+      "action": "forward_package",
+      "detail": "照下面的包流向转交",
+      "mechanical": "yes"
+    }
+  ],
+  "limits": {
+    "p2": 1,
+    "p1": 3,
+    "p0": 5,
+    "pmo-p2": 1,
+    "pmo-router": 1,
+    "pmo-scribe": 1
+  },
+  "naming": {
+    "session": "<简写>-p<职级>-<序号>",
+    "session_p0": "<简写>-p0-<工作项 ID>",
+    "fixed_sessions": {
+      "pmo-p2": "PMO-p2-01",
+      "pmo-router": "PMO-p1-01",
+      "pmo-scribe": "PMO-p0-01"
+    },
+    "tag": "[<简写>+<职级>]",
+    "work_item": "<包名>（<作者会话名>）：<任务名>",
+    "main_doc": "#<工作项 ID> <包名>（<作者会话名>）：<任务名>",
+    "reply_doc": "<答复包名>（<作者会话名>）：<同一个任务名>",
+    "draft": "packages/drafts/<序列>/YYYYMMDD-<包名>-<简称>.md"
+  },
+  "docs_tree": {
+    "space": "每个项目建一个独立的知识空间",
+    "nodes": [
+      "overview",
+      "same_seq",
+      "cross_request",
+      "review",
+      "decision",
+      "feedback",
+      "report",
+      "archive"
+    ],
+    "per_sequence": [
+      "same_seq",
+      "review",
+      "archive"
+    ],
+    "placement": [
+      {
+        "what": "request:assign",
+        "parent": "同序列需求节点下的本序列节点"
+      },
+      {
+        "what": "request:execute",
+        "parent": "来源工作项（所属阶段）的主文档"
+      },
+      {
+        "what": "delivery",
+        "parent": "它答复的那份主文档"
+      },
+      {
+        "what": "request:cross",
+        "parent": "跨序列需求节点"
+      },
+      {
+        "what": "review",
+        "parent": "送审节点下对应的序列节点"
+      },
+      {
+        "what": "verdict",
+        "parent": "它答复的送审包"
+      },
+      {
+        "what": "decision",
+        "parent": "决策节点"
+      },
+      {
+        "what": "feedback",
+        "parent": "反馈节点"
+      }
+    ],
+    "uploader": "pmo-scribe",
+    "archive": "阶段验收、归档时，把整棵子树移到归档节点下对应的序列；移动的是原节点，文档身份和链接都不变",
+    "granularity": "执行关系的{pkg:request}按验收标准划分，不按运行次数划分；每次运行靠运行 ID 记录"
+  },
+  "feishu": {
+    "work_items": [
+      {
+        "id": "project",
+        "main_doc": "立项单",
+        "replies": [],
+        "created_by": "researcher",
+        "states": [
+          "立项中",
+          "进行中",
+          "收尾",
+          "已结项"
+        ],
+        "end_states": [
+          "已结项"
+        ],
+        "transitions": [
+          [
+            "立项中",
+            "进行中"
+          ],
+          [
+            "进行中",
+            "收尾"
+          ],
+          [
+            "收尾",
+            "已结项"
+          ]
+        ],
+        "forms": [
+          {
+            "from": "立项中",
+            "to": "进行中",
+            "required": [
+              "wiki_space"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "same_seq",
+        "main_doc": "{pkg:request}",
+        "packages": [
+          "request"
+        ],
+        "relations": [
+          "assign",
+          "execute"
+        ],
+        "replies": [
+          "delivery"
+        ],
+        "created_by": "pmo-scribe",
+        "states": [
+          "待开工",
+          "执行中",
+          "阻塞",
+          "待验收",
+          "已验收",
+          "归档"
+        ],
+        "end_states": [
+          "归档"
+        ],
+        "transitions": [
+          [
+            "待开工",
+            "执行中"
+          ],
+          [
+            "执行中",
+            "阻塞"
+          ],
+          [
+            "阻塞",
+            "执行中"
+          ],
+          [
+            "执行中",
+            "待验收"
+          ],
+          [
+            "待验收",
+            "已验收"
+          ],
+          [
+            "待验收",
+            "执行中"
+          ],
+          [
+            "已验收",
+            "归档"
+          ]
+        ],
+        "forms": [
+          {
+            "from": "执行中",
+            "to": "阻塞",
+            "required": [
+              "blocked_reason"
+            ]
+          },
+          {
+            "from": "执行中",
+            "to": "待验收",
+            "required": [
+              "review_link"
+            ]
+          },
+          {
+            "from": "待验收",
+            "to": "已验收",
+            "required": [
+              "verdict",
+              "verdict_link"
+            ]
+          },
+          {
+            "from": "待验收",
+            "to": "执行中",
+            "required": [
+              "verdict"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "cross_request",
+        "main_doc": "{pkg:request}",
+        "packages": [
+          "request"
+        ],
+        "relations": [
+          "cross"
+        ],
+        "replies": [
+          "delivery"
+        ],
+        "created_by": "pmo-scribe",
+        "states": [
+          "待接单",
+          "协商中",
+          "已接单",
+          "已拒绝",
+          "已交付",
+          "已关闭"
+        ],
+        "end_states": [
+          "已拒绝",
+          "已关闭"
+        ],
+        "transitions": [
+          [
+            "待接单",
+            "已接单"
+          ],
+          [
+            "待接单",
+            "协商中"
+          ],
+          [
+            "协商中",
+            "已接单"
+          ],
+          [
+            "协商中",
+            "已拒绝"
+          ],
+          [
+            "已接单",
+            "已交付"
+          ],
+          [
+            "已交付",
+            "已关闭"
+          ]
+        ],
+        "forms": [
+          {
+            "from": "待接单",
+            "to": "已接单",
+            "required": [
+              "restatement",
+              "accepted_scope",
+              "expected_delivery"
+            ]
+          },
+          {
+            "from": "待接单",
+            "to": "协商中",
+            "required": [
+              "accepted_scope"
+            ]
+          },
+          {
+            "from": "协商中",
+            "to": "已接单",
+            "required": [
+              "restatement",
+              "accepted_scope",
+              "expected_delivery"
+            ]
+          },
+          {
+            "from": "协商中",
+            "to": "已拒绝",
+            "required": [
+              "accepted_scope"
+            ]
+          },
+          {
+            "from": "已接单",
+            "to": "已交付",
+            "required": [
+              "delivery_link"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "review",
+        "main_doc": "{pkg:review}",
+        "packages": [
+          "review"
+        ],
+        "replies": [
+          "verdict"
+        ],
+        "created_by": "pmo-scribe",
+        "states": [
+          "待核查",
+          "核查中",
+          "已出结论"
+        ],
+        "end_states": [
+          "已出结论"
+        ],
+        "transitions": [
+          [
+            "待核查",
+            "核查中"
+          ],
+          [
+            "核查中",
+            "已出结论"
+          ]
+        ],
+        "forms": [
+          {
+            "from": "核查中",
+            "to": "已出结论",
+            "required": [
+              "conclusion",
+              "usable_statement",
+              "invalidation"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "decision",
+        "main_doc": "{pkg:decision}",
+        "packages": [
+          "decision"
+        ],
+        "replies": [],
+        "created_by": "pmo-scribe",
+        "states": [
+          "待决定",
+          "已决定",
+          "已过期",
+          "已执行"
+        ],
+        "end_states": [
+          "已执行"
+        ],
+        "transitions": [
+          [
+            "待决定",
+            "已决定"
+          ],
+          [
+            "待决定",
+            "已过期"
+          ],
+          [
+            "已决定",
+            "已执行"
+          ],
+          [
+            "已过期",
+            "已执行"
+          ]
+        ],
+        "forms": [
+          {
+            "from": "待决定",
+            "to": "已决定",
+            "required": [
+              "decision_content",
+              "decider"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "feedback",
+        "main_doc": "导师原话所在的文档",
+        "packages": [],
+        "replies": [],
+        "created_by": "pmo-scribe",
+        "states": [
+          "待解析",
+          "待确认",
+          "已确认",
+          "已转任务"
+        ],
+        "end_states": [
+          "已转任务"
+        ],
+        "transitions": [
+          [
+            "待解析",
+            "待确认"
+          ],
+          [
+            "待确认",
+            "已确认"
+          ],
+          [
+            "已确认",
+            "已转任务"
+          ]
+        ],
+        "forms": [
+          {
+            "from": "待解析",
+            "to": "待确认",
+            "required": [
+              "category"
+            ]
+          },
+          {
+            "from": "已确认",
+            "to": "已转任务",
+            "required": [
+              "converted_items"
+            ]
+          }
+        ]
+      }
+    ],
+    "fields": {
+      "common": [
+        {
+          "id": "sequence",
+          "type": "select",
+          "options": [
+            "产品",
+            "算法",
+            "工程",
+            "基础设施",
+            "质量",
+            "项目管理",
+            "外联"
+          ]
+        },
+        {
+          "id": "sender",
+          "type": "text",
+          "note": "作者的会话名，比如 Alg-p1-02；研究员写“研究员”"
+        },
+        {
+          "id": "main_doc",
+          "type": "link"
+        },
+        {
+          "id": "due",
+          "type": "date",
+          "note": "写目标日期的 UTC 中午"
+        },
+        {
+          "id": "spec_version",
+          "type": "text"
+        },
+        {
+          "id": "evalset_version",
+          "type": "text"
+        }
+      ],
+      "source_item": {
+        "id": "source_item",
+        "type": "text",
+        "on": [
+          "same_seq",
+          "cross_request",
+          "review",
+          "decision"
+        ],
+        "note": "单行文本，只填一个工作项 ID；关联关系在一个空间里只能指向一种类型，所以不用关联字段"
+      },
+      "project": [
+        {
+          "id": "requirements_doc",
+          "type": "link"
+        },
+        {
+          "id": "spec_doc",
+          "type": "link"
+        },
+        {
+          "id": "wiki_space",
+          "type": "link"
+        },
+        {
+          "id": "budget_total",
+          "type": "number"
+        },
+        {
+          "id": "budget_used",
+          "type": "number"
+        },
+        {
+          "id": "phase",
+          "type": "select",
+          "options": [
+            "开题",
+            "方法",
+            "验收与试点",
+            "收尾"
+          ]
+        }
+      ],
+      "same_seq": [
+        {
+          "id": "project_ref",
+          "type": "workitem_related_select",
+          "target": "project"
+        },
+        {
+          "id": "relation",
+          "type": "select",
+          "options": [
+            "下发",
+            "执行"
+          ],
+          "note": "和发出方的职级一致：p2 发出是下发，p1 发出是执行；书记员登记时核对，对不上就退回"
+        },
+        {
+          "id": "owner_session",
+          "type": "text"
+        },
+        {
+          "id": "resource_limit",
+          "type": "number"
+        },
+        {
+          "id": "resource_used",
+          "type": "number"
+        },
+        {
+          "id": "resource_claim",
+          "type": "text"
+        },
+        {
+          "id": "blocked_reason",
+          "type": "text"
+        },
+        {
+          "id": "blocked_since",
+          "type": "date"
+        },
+        {
+          "id": "needs_human",
+          "type": "bool"
+        },
+        {
+          "id": "run_ids",
+          "type": "text"
+        },
+        {
+          "id": "review_link",
+          "type": "link"
+        },
+        {
+          "id": "verdict",
+          "type": "select",
+          "options": [
+            "接受",
+            "缩小",
+            "否决"
+          ]
+        },
+        {
+          "id": "verdict_link",
+          "type": "link"
+        },
+        {
+          "id": "delivery_link",
+          "type": "link"
+        }
+      ],
+      "cross_request": [
+        {
+          "id": "project_ref",
+          "type": "workitem_related_select",
+          "target": "project"
+        },
+        {
+          "id": "from_sequence",
+          "type": "select",
+          "options": [
+            "产品",
+            "算法",
+            "工程",
+            "基础设施",
+            "质量",
+            "项目管理",
+            "外联"
+          ]
+        },
+        {
+          "id": "to_sequence",
+          "type": "select",
+          "options": [
+            "产品",
+            "算法",
+            "工程",
+            "基础设施",
+            "质量",
+            "项目管理",
+            "外联"
+          ]
+        },
+        {
+          "id": "delivery_link",
+          "type": "link",
+          "note": "接单确认填需求复述、承接范围和预计交付时间三个字段，这一栏只放交付时的交付包"
+        },
+        {
+          "id": "restatement",
+          "type": "multi_text"
+        },
+        {
+          "id": "accepted_scope",
+          "type": "multi_text",
+          "note": "接受的部分，以及不接受的部分和理由"
+        },
+        {
+          "id": "expected_delivery",
+          "type": "date"
+        }
+      ],
+      "review": [
+        {
+          "id": "project_ref",
+          "type": "workitem_related_select",
+          "target": "project"
+        },
+        {
+          "id": "claim_type",
+          "type": "select",
+          "options": [
+            "效果类",
+            "采纳类",
+            "可复现类",
+            "约束有效类",
+            "交付完整类"
+          ]
+        },
+        {
+          "id": "usage",
+          "type": "select",
+          "options": [
+            "内部推进",
+            "进入试点或影响规格",
+            "对外发布"
+          ]
+        },
+        {
+          "id": "review_depth",
+          "type": "select",
+          "options": [
+            "形式核查",
+            "抽样复核",
+            "完整核查"
+          ]
+        },
+        {
+          "id": "conclusion",
+          "type": "select",
+          "options": [
+            "接受",
+            "缩小",
+            "否决"
+          ]
+        },
+        {
+          "id": "usable_statement",
+          "type": "text"
+        },
+        {
+          "id": "invalidation",
+          "type": "text"
+        }
+      ],
+      "decision": [
+        {
+          "id": "project_ref",
+          "type": "workitem_related_select",
+          "target": "project"
+        },
+        {
+          "id": "urgency",
+          "type": "select",
+          "options": [
+            "插队",
+            "今天",
+            "本周",
+            "可延后"
+          ]
+        },
+        {
+          "id": "options_summary",
+          "type": "text"
+        },
+        {
+          "id": "recommendation",
+          "type": "text"
+        },
+        {
+          "id": "default_action",
+          "type": "text"
+        },
+        {
+          "id": "decision_content",
+          "type": "text"
+        },
+        {
+          "id": "decider",
+          "type": "user"
+        },
+        {
+          "id": "channel",
+          "type": "select",
+          "options": [
+            "决策队列",
+            "研究员主动发起"
+          ]
+        }
+      ],
+      "feedback": [
+        {
+          "id": "project_ref",
+          "type": "workitem_related_select",
+          "target": "project"
+        },
+        {
+          "id": "mentor_quote",
+          "type": "text"
+        },
+        {
+          "id": "category",
+          "type": "select",
+          "options": [
+            "决定",
+            "要求",
+            "疑问"
+          ]
+        },
+        {
+          "id": "converted_items",
+          "type": "text",
+          "note": "单行文本，多个工作项 ID 用英文逗号分隔、不加空格"
+        },
+        {
+          "id": "main_doc",
+          "type": "link",
+          "note": "和其他类型共用“主文档”字段；反馈的主文档是导师原话所在的文档"
+        }
+      ]
+    },
+    "views": [
+      {
+        "name": "决策队列",
+        "on": "decision",
+        "where": "状态 = 待决定",
+        "order": "紧急程度（插队、今天、本周、可延后），再按截止时间",
+        "pinned": true
+      },
+      {
+        "name": "阻塞",
+        "on": "same_seq",
+        "where": "状态 = 阻塞",
+        "columns": "名称、状态、序列、负责会话、阻塞原因、阻塞开始日期、截止时间、发出方",
+        "pinned": true
+      },
+      {
+        "name": "待验收",
+        "on": "same_seq",
+        "where": "状态 = 待验收",
+        "columns": "名称、状态、序列、送审包、截止时间、负责会话、发出方",
+        "pinned": true
+      },
+      {
+        "name": "待核查",
+        "on": "review",
+        "where": "状态 = 待核查",
+        "order": "截止时间",
+        "columns": "名称、状态、核查深度、用途、截止时间、来源工作项、序列、发出方",
+        "pinned": true
+      },
+      {
+        "name": "序列看板",
+        "on": "same_seq",
+        "where": "状态 ≠ 归档",
+        "mode": "看板，按序列分栏"
+      },
+      {
+        "name": "本周变化",
+        "on": "same_seq",
+        "where": "更新时间 = 本周",
+        "order": "更新时间倒序"
+      }
+    ],
+    "date_rule": "日期字段写目标日期的 UTC 中午",
+    "mql_rule": "MQL 用带引号的 heredoc 传入；结果在 data.<分组>[].moql_field_list 里，工作项 ID 是 {key: work_item_id, value: {long_value}}",
+    "type_arg_rule": "workitem 命令的 --work-item-type 接受 api_name、type_key 和中文名；view search 的 --view-scope 只认 type_key",
+    "system_states": [
+      "已终止"
+    ],
+    "system_states_note": "每个状态流都自带“已终止”：删不掉，list-state-transitions 不返回它，终止不算一次流转。视图默认不显示已终止的工作项，MQL 不会自动排除，查询要显式排除。",
+    "owner_role": "researcher",
+    "closed_for_routing": [
+      "已验收",
+      "已过期"
+    ],
+    "closed_for_routing_note": "路由时这些状态也算关了：同序列需求验收后只等归档，决策过期后照默认处理执行。新信息不再续到它们身上，交入口判断。"
+  },
+  "plugin_decisions": [
+    "项目管理 +2 是入口，每日决策队列由它交给研究员。依据：研究员 2026-11-01 定下的入口方向。",
+    "跨序列需求的接单确认填在流转表单里：待接单到已接单确认接单，协商中到已拒绝填承接范围，已接单到已交付要附交付包。",
+    "同序列需求用“关系”字段区分下发和执行；决策有“渠道”字段，反馈也有“主文档”字段。",
+    "书记员除了接项目管理 +1 的需求包，也接各序列 +2、+1 的登记请求，只登记请求方自己写的草稿。原因：派 +1、+0 之前要先有工作项 ID，而 +1 在嵌套的第二层，回不到路由。",
+    "各会话可以自己加带会话标签的评论（只追加）；工作项、字段、状态和文档仍只由书记员写。",
+    "“项目”工作项由书记员按研究员签字的立项单代建，负责人角色填研究员，研究员在网页上核对。",
+    "决策包包头加“紧急程度”和“默认处理”两行，对应决策工作项已有的两个字段，决策队列按紧急程度排序。"
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "ok": true,
+  "identity": "bot",
+  "dry_run": true,
+  "data": {
+    "decision": {
+      "event_key": "im.message.receive_v1",
+      "domain": "im",
+      "identity": "bot",
+      "status": "ready",
+      "params": {},
+      "scope": "im.message.receive_v1",
+      "preconditions": [
+        {
+          "name": "credentials_available",
+          "status": "ok"
+        },
+        {
+          "name": "console_event_published",
+          "status": "ok"
+        },
+        {
+          "name": "scopes_granted",
+          "status": "ok"
+        }
+      ],
+      "would_read": [
+        "local_bus_probe",
+        "app_metadata_preflight"
+      ],
+      "would_write": [
+        "start_or_reuse_local_bus",
+        "register_consumer",
+        "open_event_stream"
+      ]
+    }
+  }
+}

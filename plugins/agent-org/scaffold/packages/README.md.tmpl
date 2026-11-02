@@ -1,0 +1,7 @@
+# packages/
+
+任务包的草稿放在 `drafts/<序列>/`，每个序列一个目录。文件名写成 `YYYYMMDD-<包名>-<简称>.md`，内容按技能 `agent-org:packages` 的模板写，模板副本在 `.claude/agent-org/templates/`。
+
+- 各序列只写自己序列的草稿目录；入口、路由和书记员可以读写整个 `packages/`。
+- 写完先自查：`python3 -I .claude/agent-org/bin/orgspec.py lint <草稿路径>`。
+- 书记员登记后，把工作项 ID 写回草稿包头的“关联工作项”，并在 `sent/` 留一份回执：草稿路径、飞书文档链接、工作项 ID、登记时间。草稿本身不删。

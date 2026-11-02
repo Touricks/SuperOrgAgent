@@ -1,0 +1,21 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "creator": "ou_researcher",
+    "has_child": false,
+    "node_create_time": "1793500723",
+    "node_token": "wikNodeMainDoc0001",
+    "node_type": "origin",
+    "obj_create_time": "1793500723",
+    "obj_edit_time": "1793500725",
+    "obj_token": "docxMainDoc0001",
+    "obj_type": "docx",
+    "origin_node_token": "wikNodeMainDoc0001",
+    "owner": "ou_researcher",
+    "parent_node_token": "wikNodeProduct0001",
+    "space_id": "7000000000000000001",
+    "title": "#7151870875 下发包（Product-p2-01）：AutoResearch 的需求文档",
+    "updated_at": "2026-11-01T02:38:45Z"
+  }
+}

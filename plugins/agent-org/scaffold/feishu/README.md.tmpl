@@ -1,0 +1,12 @@
+# feishu/
+
+台账在飞书项目，任务包在飞书文档。这个目录放两边的 ID 和本地记录。
+
+| 文件 | 由谁写 | 用途 |
+| --- | --- | --- |
+| `ids.json` | `setup.py feishu --apply` | project_key、工作项类型的 type_key 和模板 ID、知识库空间和节点的 token；键用规则文件里的英文标识 |
+| `field-dictionary.json`、`.md` | `setup.py feishu --apply` | 字段字典：每种工作项类型的字段、field_key、类型和可选值；空间配置一改就重新导出 |
+| `migration.md` | `setup.py feishu` | 这个空间和插件规则文件的差异清单：要改名的类型和字段、要加的字段和表单、要建的节点 |
+| `write-log.jsonl` | `ledger.py`、hook `audit.py` | 每条飞书写操作的时间、会话、命令、结果和返回的 ID |
+
+空间：{{space_line}}

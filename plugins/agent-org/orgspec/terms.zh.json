@@ -1,0 +1,126 @@
+{
+  "_说明": "规则文件 rules.json 只用英文标识；中文名都在这里。改名时只改这张表，再把技能和文档里的说明文字一并改掉。",
+  "rank": {
+    "p0": "+0",
+    "p1": "+1",
+    "p2": "+2"
+  },
+  "seq": {
+    "product": "产品",
+    "alg": "算法",
+    "rnd": "工程",
+    "infra": "基础设施",
+    "quality": "质量",
+    "pmo": "项目管理",
+    "liaison": "外联"
+  },
+  "abbrev": {
+    "product": "Product",
+    "alg": "Alg",
+    "rnd": "RnD",
+    "infra": "Infra",
+    "quality": "Quality",
+    "pmo": "PMO",
+    "liaison": "Liaison"
+  },
+  "pkg": {
+    "request": "需求包",
+    "delivery": "交付包",
+    "review": "送审包",
+    "verdict": "验收包",
+    "decision": "决策包"
+  },
+  "rel": {
+    "assign": "下发",
+    "execute": "执行",
+    "cross": "跨序列"
+  },
+  "wi": {
+    "project": "项目",
+    "same_seq": "同序列需求",
+    "cross_request": "跨序列需求",
+    "review": "送审",
+    "decision": "决策",
+    "feedback": "反馈"
+  },
+  "node": {
+    "overview": "项目总览",
+    "same_seq": "同序列需求包",
+    "cross_request": "跨序列需求包",
+    "review": "送审包",
+    "decision": "决策包",
+    "feedback": "反馈包",
+    "report": "汇报文档",
+    "archive": "归档文档"
+  },
+  "role": {
+    "entry": "入口",
+    "router": "路由",
+    "scribe": "书记员",
+    "researcher": "研究员",
+    "mentor": "导师"
+  },
+  "channel": {
+    "queue": "决策队列",
+    "researcher": "研究员主动发起"
+  },
+  "field": {
+    "sequence": "序列",
+    "sender": "发出方",
+    "main_doc": "主文档",
+    "due": "截止时间",
+    "spec_version": "规格版本",
+    "evalset_version": "评测集版本",
+    "source_item": "来源工作项",
+    "project_ref": "所属项目",
+    "requirements_doc": "需求文档",
+    "spec_doc": "规格",
+    "wiki_space": "知识库空间",
+    "budget_total": "总预算",
+    "budget_used": "已用预算",
+    "phase": "阶段",
+    "relation": "关系",
+    "owner_session": "负责会话",
+    "resource_limit": "资源上限",
+    "resource_used": "已用资源",
+    "resource_claim": "资源声明",
+    "blocked_reason": "阻塞原因",
+    "blocked_since": "阻塞开始日期",
+    "needs_human": "是否需要人决定",
+    "run_ids": "运行 ID",
+    "review_link": "送审包",
+    "verdict": "验收结论",
+    "verdict_link": "验收包",
+    "delivery_link": "交付包",
+    "from_sequence": "发起序列",
+    "to_sequence": "承接序列",
+    "restatement": "需求复述",
+    "accepted_scope": "承接范围",
+    "expected_delivery": "预计交付时间",
+    "claim_type": "结论类型",
+    "usage": "用途",
+    "review_depth": "核查深度",
+    "conclusion": "结论",
+    "usable_statement": "可使用的结论原文",
+    "invalidation": "失效条件",
+    "urgency": "紧急程度",
+    "options_summary": "选项摘要",
+    "recommendation": "建议",
+    "default_action": "默认处理",
+    "decision_content": "决定内容",
+    "decider": "决定人",
+    "channel": "渠道",
+    "mentor_quote": "导师原话",
+    "category": "类别",
+    "converted_items": "转成的工作项"
+  },
+  "retired": {
+    "委托包": "需求包",
+    "交回包": "交付包",
+    "验收结论包": "验收包",
+    "汇总包": "交付包",
+    "回执包": "交付包",
+    "下发包": "下发关系的需求包",
+    "执行包": "执行关系的需求包"
+  }
+}

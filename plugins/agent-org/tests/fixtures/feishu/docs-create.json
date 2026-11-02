@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "identity": "user",
+  "data": {
+    "document": {
+      "document_id": "docxMainDoc0001",
+      "revision_id": 3,
+      "url": "https://example.feishu.cn/docx/docxMainDoc0001"
+    }
+  }
+}

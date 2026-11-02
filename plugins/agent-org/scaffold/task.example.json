@@ -1,0 +1,23 @@
+{
+  "name": "示例项目",
+  "description": "面向代码的约束优化器",
+  "editable_paths": [
+    "repo/**"
+  ],
+  "protected_paths": [
+    "repo/eval/**",
+    "data/eval/**"
+  ],
+  "feishu": {
+    "meegle_space": "<你的飞书项目空间名>",
+    "wiki_space": "<你的知识空间名>"
+  },
+  "models": {
+    "p2": "opus",
+    "p1": "sonnet",
+    "p0": "sonnet",
+    "pmo-router": "sonnet",
+    "pmo-scribe": "haiku",
+    "quality-p1": "opus"
+  }
+}

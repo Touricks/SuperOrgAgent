@@ -1,0 +1,379 @@
+{
+  "note": "测试空间里各类型和字段的系统标识，测试用；插件本身不读这个文件。",
+  "project_key": "6ae56d2e2f1d0216b5b97cb2",
+  "simple_name": "cn09lu",
+  "types": {
+    "project": {
+      "type_key": "6ae6867320c5edfd72c23f2c",
+      "api_name": "project",
+      "name": null
+    },
+    "same_seq": {
+      "type_key": "6ae687b383e512df18483426",
+      "api_name": "package",
+      "name": "任务包"
+    },
+    "cross_request": {
+      "type_key": "6ae6881809318d94fd50e32a",
+      "api_name": "cross_request",
+      "name": null
+    },
+    "review": {
+      "type_key": "6ae6884c9a64272328e80b76",
+      "api_name": "review",
+      "name": null
+    },
+    "decision": {
+      "type_key": "6ae688662a2427d9b87b6850",
+      "api_name": "decision",
+      "name": null
+    },
+    "feedback": {
+      "type_key": "6ae6887e28f06150d8c9346a",
+      "api_name": "feedback",
+      "name": null
+    }
+  },
+  "fields": {
+    "project": {
+      "sequence": {
+        "field_key": "field_9e236a",
+        "name": "序列"
+      },
+      "sender": {
+        "field_key": "field_b371a4",
+        "name": "发出方"
+      },
+      "main_doc": {
+        "field_key": "field_5c14c6",
+        "name": "主文档"
+      },
+      "due": {
+        "field_key": "field_46c346",
+        "name": "截止时间"
+      },
+      "spec_version": {
+        "field_key": "field_2e2fca",
+        "name": "规格版本"
+      },
+      "evalset_version": {
+        "field_key": "field_f63c23",
+        "name": "评测集版本"
+      },
+      "requirements_doc": {
+        "field_key": "field_f40d76",
+        "name": "需求文档"
+      },
+      "spec_doc": {
+        "field_key": "field_d841cc",
+        "name": "规格"
+      },
+      "wiki_space": {
+        "field_key": "field_4c676c",
+        "name": "知识库空间"
+      },
+      "budget_total": {
+        "field_key": "field_96042b",
+        "name": "总预算"
+      },
+      "budget_used": {
+        "field_key": "field_8c500b",
+        "name": "已用预算"
+      },
+      "phase": {
+        "field_key": "field_f79d32",
+        "name": "阶段"
+      }
+    },
+    "same_seq": {
+      "sequence": {
+        "field_key": "field_9e236a",
+        "name": "序列"
+      },
+      "sender": {
+        "field_key": "field_b371a4",
+        "name": "发出方"
+      },
+      "main_doc": {
+        "field_key": "field_5c14c6",
+        "name": "主文档"
+      },
+      "due": {
+        "field_key": "field_46c346",
+        "name": "截止时间"
+      },
+      "spec_version": {
+        "field_key": "field_2e2fca",
+        "name": "规格版本"
+      },
+      "evalset_version": {
+        "field_key": "field_f63c23",
+        "name": "评测集版本"
+      },
+      "source_item": {
+        "field_key": "field_43cb8a",
+        "name": "来源工作项"
+      },
+      "project_ref": {
+        "field_key": "field_3827a2",
+        "name": "所属项目"
+      },
+      "relation": {
+        "field_key": "field_d96adf",
+        "name": "包类型"
+      },
+      "owner_session": {
+        "field_key": "field_1297a2",
+        "name": "负责会话"
+      },
+      "resource_limit": {
+        "field_key": "field_021dfb",
+        "name": "资源上限"
+      },
+      "resource_used": {
+        "field_key": "field_0d2446",
+        "name": "已用资源"
+      },
+      "resource_claim": {
+        "field_key": "field_0f7bc1",
+        "name": "资源声明"
+      },
+      "blocked_reason": {
+        "field_key": "field_10ad63",
+        "name": "阻塞原因"
+      },
+      "blocked_since": {
+        "field_key": "field_414a78",
+        "name": "阻塞开始日期"
+      },
+      "needs_human": {
+        "field_key": "field_ea11a0",
+        "name": "是否需要人决定"
+      },
+      "run_ids": {
+        "field_key": "field_b94560",
+        "name": "运行 ID"
+      },
+      "review_link": {
+        "field_key": "field_757cc2",
+        "name": "送审包"
+      },
+      "verdict": {
+        "field_key": "field_8a8e84",
+        "name": "验收结论"
+      },
+      "verdict_link": {
+        "field_key": "field_053a62",
+        "name": "验收结论包"
+      },
+      "delivery_link": {
+        "field_key": "field_7e2187",
+        "name": "交回包"
+      }
+    },
+    "cross_request": {
+      "sequence": {
+        "field_key": "field_9e236a",
+        "name": "序列"
+      },
+      "sender": {
+        "field_key": "field_b371a4",
+        "name": "发出方"
+      },
+      "main_doc": {
+        "field_key": "field_5c14c6",
+        "name": "主文档"
+      },
+      "due": {
+        "field_key": "field_46c346",
+        "name": "截止时间"
+      },
+      "spec_version": {
+        "field_key": "field_2e2fca",
+        "name": "规格版本"
+      },
+      "evalset_version": {
+        "field_key": "field_f63c23",
+        "name": "评测集版本"
+      },
+      "source_item": {
+        "field_key": "field_43cb8a",
+        "name": "来源工作项"
+      },
+      "project_ref": {
+        "field_key": "field_d2c52a",
+        "name": "所属项目"
+      },
+      "from_sequence": {
+        "field_key": "field_cd125c",
+        "name": "发起序列"
+      },
+      "to_sequence": {
+        "field_key": "field_eebd40",
+        "name": "承接序列"
+      },
+      "delivery_link": {
+        "field_key": "field_39dc54",
+        "name": "回执包"
+      }
+    },
+    "review": {
+      "sequence": {
+        "field_key": "field_9e236a",
+        "name": "序列"
+      },
+      "sender": {
+        "field_key": "field_b371a4",
+        "name": "发出方"
+      },
+      "main_doc": {
+        "field_key": "field_5c14c6",
+        "name": "主文档"
+      },
+      "due": {
+        "field_key": "field_46c346",
+        "name": "截止时间"
+      },
+      "spec_version": {
+        "field_key": "field_2e2fca",
+        "name": "规格版本"
+      },
+      "evalset_version": {
+        "field_key": "field_f63c23",
+        "name": "评测集版本"
+      },
+      "source_item": {
+        "field_key": "field_43cb8a",
+        "name": "来源工作项"
+      },
+      "project_ref": {
+        "field_key": "field_44882b",
+        "name": "所属项目"
+      },
+      "claim_type": {
+        "field_key": "field_c8f2f9",
+        "name": "结论类型"
+      },
+      "usage": {
+        "field_key": "field_c478a2",
+        "name": "用途"
+      },
+      "review_depth": {
+        "field_key": "field_b68a36",
+        "name": "核查深度"
+      },
+      "conclusion": {
+        "field_key": "field_f6d429",
+        "name": "结论"
+      },
+      "usable_statement": {
+        "field_key": "field_bd5f51",
+        "name": "可使用的结论原文"
+      },
+      "invalidation": {
+        "field_key": "field_1ddd6e",
+        "name": "失效条件"
+      }
+    },
+    "decision": {
+      "sequence": {
+        "field_key": "field_9e236a",
+        "name": "序列"
+      },
+      "sender": {
+        "field_key": "field_b371a4",
+        "name": "发出方"
+      },
+      "main_doc": {
+        "field_key": "field_5c14c6",
+        "name": "主文档"
+      },
+      "due": {
+        "field_key": "field_46c346",
+        "name": "截止时间"
+      },
+      "spec_version": {
+        "field_key": "field_2e2fca",
+        "name": "规格版本"
+      },
+      "evalset_version": {
+        "field_key": "field_f63c23",
+        "name": "评测集版本"
+      },
+      "source_item": {
+        "field_key": "field_43cb8a",
+        "name": "来源工作项"
+      },
+      "project_ref": {
+        "field_key": "field_607671",
+        "name": "所属项目"
+      },
+      "urgency": {
+        "field_key": "field_65c604",
+        "name": "紧急程度"
+      },
+      "options_summary": {
+        "field_key": "field_cc4e92",
+        "name": "选项摘要"
+      },
+      "recommendation": {
+        "field_key": "field_9ab577",
+        "name": "建议"
+      },
+      "default_action": {
+        "field_key": "field_e11442",
+        "name": "默认处理"
+      },
+      "decision_content": {
+        "field_key": "field_899dbd",
+        "name": "决定内容"
+      },
+      "decider": {
+        "field_key": "field_c9def8",
+        "name": "决定人"
+      }
+    },
+    "feedback": {
+      "sequence": {
+        "field_key": "field_9e236a",
+        "name": "序列"
+      },
+      "sender": {
+        "field_key": "field_b371a4",
+        "name": "发出方"
+      },
+      "main_doc": {
+        "field_key": "field_5c14c6",
+        "name": "主文档"
+      },
+      "due": {
+        "field_key": "field_46c346",
+        "name": "截止时间"
+      },
+      "spec_version": {
+        "field_key": "field_2e2fca",
+        "name": "规格版本"
+      },
+      "evalset_version": {
+        "field_key": "field_f63c23",
+        "name": "评测集版本"
+      },
+      "project_ref": {
+        "field_key": "field_628e26",
+        "name": "所属项目"
+      },
+      "mentor_quote": {
+        "field_key": "field_2127b0",
+        "name": "导师原话"
+      },
+      "category": {
+        "field_key": "field_e5f589",
+        "name": "类别"
+      },
+      "converted_items": {
+        "field_key": "field_a7a8ab",
+        "name": "转成的工作项"
+      }
+    }
+  }
+}
