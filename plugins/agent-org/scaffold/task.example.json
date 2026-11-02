@@ -10,6 +10,7 @@
   ],
   "feishu": {
     "meegle_space": "<你的飞书项目空间名>",
+    "template_space": "std_template",
     "wiki_space": "<你的知识空间名>"
   },
   "models": {

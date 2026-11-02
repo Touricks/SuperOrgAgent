@@ -26,7 +26,7 @@ plugins/agent-org/
 ├─ scripts/                          orgspec.py 读规则和检查包；setup.py 初始化；ledger.py 台账；route.py 路由、收件箱、聚焦会话
 ├─ scaffold/                         初始化时生成项目文件用的模板和 hook
 ├─ skills/
-│  ├─ setup/                         预检、初始化、绑定飞书空间
+│  ├─ setup/                         预检、初始化、搭模板空间、绑定飞书空间
 │  ├─ charter/                       立项单、阶段计划
 │  ├─ spec/                          访谈后写实验规格和评测协议
 │  ├─ packages/                      五类包的模板、设计原则、序列接口、示例

@@ -4,6 +4,7 @@
     python3 -I scripts/setup.py precheck
     python3 -I scripts/setup.py init --target DIR --task task.json [--sequences product,alg,...] [--apply]
     python3 -I scripts/setup.py feishu --target DIR [--map ID=NAME ...] [--live] [--apply]
+    python3 -I scripts/setup.py template [--space NAME] [--target DIR] [--live]
     python3 -I scripts/setup.py check --target DIR
 
 init renders agents, project settings (permissions and hooks), CLAUDE.md, org/,
@@ -15,7 +16,14 @@ twice with the same inputs writes nothing.
 feishu binds the rules' types and fields to the space spec/task.json names: by
 --map, else the key bound last time, else the same name. It writes the keys to
 feishu/ids.json and a build-and-check list to feishu/migration.md. It only reads
-Feishu; the ledger refuses to touch Feishu until a binding has been applied.
+Feishu; the ledger refuses to touch Feishu until a binding has been applied. When
+no type matches, it points to copying the space from the template, and --apply
+records the space without a binding time.
+
+template checks the space that project spaces are copied from (feishu.template_space
+in the task file, else std_template): its types, states, roles, fields and options
+must carry the rules' own names, so that a copy binds without --map. It always
+reads Feishu (--live is accepted, as for feishu) and writes nothing.
 Python 3.9 standard library only.
 """
 import argparse
@@ -40,6 +48,7 @@ PLUGIN_ROOT = orgspec.PLUGIN_ROOT
 SCAFFOLD = os.path.join(PLUGIN_ROOT, "scaffold")
 TEMPLATES = os.path.join(PLUGIN_ROOT, "skills", "packages", "assets")
 MIN_VERSIONS = {"lark-cli": "1.0.96", "meegle": "1.0.23", "claude": "2.1.217"}
+DEFAULT_TEMPLATE_SPACE = "std_template"
 DEFAULT_MODELS = {"p2": "opus", "p1": "sonnet", "p0": "sonnet", "pmo-p2": "opus",
                   "pmo-router": "sonnet", "pmo-scribe": "haiku", "quality-p1": "opus"}
 REQUIRED_SEQUENCES = ("pmo", "quality")
@@ -1032,10 +1041,17 @@ def parse_maps(spec, items):
     return maps
 
 
-def bind(spec, ids, fd, maps):
+def template_space(task_feishu):
+    """The space project spaces are copied from: feishu.template_space, else std_template."""
+    return str((task_feishu or {}).get("template_space") or "").strip() or DEFAULT_TEMPLATE_SPACE
+
+
+def bind(spec, ids, fd, maps, template=False):
     """Bind the rules' types and fields to this space: what --map names, else the key bound
     last time while it still exists, else the same name. Updates ids["meegle"] and returns the
-    problems as [对象, 问题, 怎么办] rows."""
+    problems as [对象, 问题, 怎么办] rows. With template=True the space is checked as the
+    template projects are copied from: its names must be the rules' own, so the advice is to
+    rename rather than to point with --map."""
     m = ids.setdefault("meegle", {})
     space = (fd or {}).get("types") or {}
     types = m.setdefault("types", {})
@@ -1054,9 +1070,10 @@ def bind(spec, ids, fd, maps):
             types.pop(wid, None)
             if hits:
                 problems.append([want, "空间里有 %d 个“%s”类型" % (len(hits), asked or want),
-                                 "用 `--map %s=<type_key>` 指明用哪一个" % wid])
+                                 "同名的类型只留一个" if template else "用 `--map %s=<type_key>` 指明用哪一个" % wid])
             else:
                 problems.append([want, "按“%s”找不到类型" % asked if asked else "空间里没有这个类型",
+                                 "照搭建手册建这个类型；已经有、只是名字不同的，改名为“%s”" % want if template else
                                  "照下面“%s”一节建好；已经有、只是名字不同的，用 `--map %s=<空间里的类型名>` 指认" % (want, wid)])
             continue
         t = space[hits[0]]
@@ -1067,6 +1084,12 @@ def bind(spec, ids, fd, maps):
         types[wid] = slot
         if not any(r.get("role_name") == role for r in t.get("roles", [])):
             problems.append([want, "没有“%s”角色" % role, "在这个类型的角色里加上“%s”，每个状态的授权角色都设成它" % role])
+        status = next((f for f in t.get("fields", []) if f.get("field_key") == "work_item_status"), None)
+        have = [o.get("name") for o in (status or {}).get("options") or []]
+        missing = [s for s in w["states"] if s not in have]
+        if have and missing:                          # the status field lists the states of the flow
+            problems.append([want, "缺状态：%s" % "、".join(missing),
+                             "在这个类型的状态流里加上，或者把现有状态改成这些名字；现有：%s" % "、".join(have)])
     old, keys = m.get("field_keys") or {}, {}
     for wid, slot in types.items():
         custom = [f for f in (space.get(slot["type_key"]) or {}).get("fields", [])
@@ -1083,14 +1106,15 @@ def bind(spec, ids, fd, maps):
             else:
                 hits = [x for x in custom if x.get("name") == name]
             if not hits:
+                need = "建一个%s字段，名字写“%s”%s" % (FIELD_TYPES.get(f.get("type"), f.get("type") or ""), name,
+                                                    "，选项：%s" % "、".join(f["options"]) if f.get("options") else "")
                 problems.append([label, "按“%s”找不到字段" % asked if asked else "空间里没有",
-                                 "建一个%s字段，名字写“%s”%s；已经有、只是名字不同的，用 `--map %s.%s=<空间里的字段名>` 指认" % (
-                                     FIELD_TYPES.get(f.get("type"), f.get("type") or ""), name,
-                                     "，选项：%s" % "、".join(f["options"]) if f.get("options") else "", wid, fid)])
+                                 need + ("；已经有、只是名字不同的，改成这个名字" if template else
+                                         "；已经有、只是名字不同的，用 `--map %s.%s=<空间里的字段名>` 指认" % (wid, fid))])
                 continue
             if len(hits) > 1:
                 problems.append([label, "有 %d 个同名字段（%s）" % (len(hits), "、".join(x["field_key"] for x in hits)),
-                                 "用 `--map %s.%s=<field_key>` 指明用哪一个" % (wid, fid)])
+                                 "同名的字段只留一个" if template else "用 `--map %s.%s=<field_key>` 指明用哪一个" % (wid, fid)])
                 continue
             x = hits[0]
             got = x.get("field_type")
@@ -1107,27 +1131,23 @@ def bind(spec, ids, fd, maps):
     return problems
 
 
-def migration_md(spec, ids, fd, found_views=None, problems=None):
+def binding_table(spec, ids, label="已绑定的字段"):
     m = ids.get("meegle") or {}
-    types = m.get("types") or {}
-    keys = m.get("field_keys") or {}
-    role = spec.term("role", spec.rules["feishu"]["owner_role"])
-    lines = ["# 建空间与核对清单", "",
-             "> 由 `setup.py feishu` 生成。飞书项目的类型、字段、流程、表单、角色、详情页和视图只能在网页上建；建好或改好以后重跑 `setup.py feishu --live --apply`，脚本按名字重新绑定。知识库节点由书记员用 `ledger.py ensure-node` 建。",
-             "> 空间里已经有、只是名字和这里不同的，不必改名：用 `--map <类型标识>=<空间里的类型名>` 或 `--map <类型标识>.<字段标识>=<空间里的字段名>` 指认。绑定以后脚本按键找，空间里改名也不会断。", ""]
+    types, keys = m.get("types") or {}, m.get("field_keys") or {}
     rows = []
     for w in spec.work_items():
         t = types.get(w["id"])
         rows.append([spec.term("wi", w["id"]), "%s（`%s`）" % (t.get("name"), t.get("type_key")) if t else "没绑定",
                      "%d / %d" % (len(keys.get(w["id"]) or {}), len(spec.fields_of(w["id"]))) if t else "—"])
-    lines += ["## 绑定结果", "", orgspec.md_table(["类型", "空间里的类型", "已绑定的字段"], rows), ""]
-    lines += ["## 要处理的问题", ""]
-    if problems is None:
-        lines += ["还没有字段字典，没法核对：先跑 `setup.py feishu --live`。", ""]
-    else:
-        lines += [orgspec.md_table(["对象", "问题", "怎么办"], problems) if problems else "无。", ""]
-    lines += ["## 每种类型要有的东西", "",
-              "照下面逐项建或核对。每种类型都用状态流，列在最前面的状态是初始状态，每个状态的授权角色都设成“%s”。名字和这里不同的，用 `--map` 指认。序列、发出方这些几种类型都有的字段，可以在一个类型上建好，再用“复制至其他工作项”加到别的类型上。" % role, ""]
+    return orgspec.md_table(["类型", "空间里的类型", label], rows)
+
+
+def structure_md(spec, ids):
+    """每种类型要有的东西: the states, transitions, forms, role and fields each type needs."""
+    keys = (ids.get("meegle") or {}).get("field_keys") or {}
+    role = spec.term("role", spec.rules["feishu"]["owner_role"])
+    lines = ["## 每种类型要有的东西", "",
+             "照下面逐项建或核对。每种类型都用状态流，列在最前面的状态是初始状态，每个状态的授权角色都设成“%s”。序列、发出方这些几种类型都有的字段，可以在一个类型上建好，再用“复制至其他工作项”加到别的类型上。" % role, ""]
     for w in spec.work_items():
         wid = w["id"]
         forms = "；".join("%s→%s：%s" % (f["from"], f["to"], "、".join(spec.field_name(x) for x in f["required"]))
@@ -1145,6 +1165,21 @@ def migration_md(spec, ids, fd, found_views=None, problems=None):
             rows.append([spec.field_name(f["id"]), "`%s`" % f["id"], FIELD_TYPES.get(f.get("type"), f.get("type") or ""),
                          options, (keys.get(wid) or {}).get(f["id"]) or "没绑定", f.get("note", "")])
         lines += [orgspec.md_table(["字段", "标识", "类型", "选项", "空间里的 field_key", "说明"], rows), ""]
+    return "\n".join(lines)
+
+
+def migration_md(spec, ids, fd, found_views=None, problems=None):
+    m = ids.get("meegle") or {}
+    lines = ["# 建空间与核对清单", "",
+             "> 由 `setup.py feishu` 生成。项目空间从模板空间（默认叫 %s）用“分享空间配置”复制：类型、字段、流程、表单、角色和详情页跟着复制过来，条件视图和空间置顶不复制，每个项目空间各建一次。这里缺的结构先在模板里补上，以后复制的空间就都有；本空间也照样补一遍，已经复制出来的空间不会跟着模板变。补好以后重跑 `setup.py feishu --live --apply`。知识库节点由书记员用 `ledger.py ensure-node` 建。" % DEFAULT_TEMPLATE_SPACE,
+             "> 空间里已经有、只是名字和这里不同的，不必改名：用 `--map <类型标识>=<空间里的类型名>` 或 `--map <类型标识>.<字段标识>=<空间里的字段名>` 指认。绑定以后脚本按键找，空间里改名也不会断。", ""]
+    lines += ["## 绑定结果", "", binding_table(spec, ids), ""]
+    lines += ["## 要处理的问题", ""]
+    if problems is None:
+        lines += ["还没有字段字典，没法核对：先跑 `setup.py feishu --live`。", ""]
+    else:
+        lines += [orgspec.md_table(["对象", "问题", "怎么办"], problems) if problems else "无。", ""]
+    lines += [structure_md(spec, ids)]
     rows = []
     for v in spec.rules["feishu"]["views"]:
         found = None if found_views is None else found_views.get(v["name"])
@@ -1190,13 +1225,13 @@ def migration_md(spec, ids, fd, found_views=None, problems=None):
         ["project_key", "有" if m.get("project_key") else "缺", "跑 `setup.py feishu --live --apply`：按 `spec/task.json` 里的空间名精确查找"],
         ["simple_name", "有" if m.get("simple_name") else "缺", "同上；工作项链接要用它"],
         ["研究员的 open_id", "有" if lark.get("researcher_open_id") else "缺", "同上：从 `lark-cli whoami` 读；没有它，飞书私聊监听不启动"],
-        ["知识空间 space_id", "有" if wiki.get("space_id") else "缺", "先在已有的知识空间里找（名字可能不一样），确认没有再建：研究员本人执行 `lark-cli wiki +space-create --name \"<知识空间名>\" --description \"<一句话>\" --as user`，再重跑 `setup.py feishu --live --apply`"],
+        ["知识空间 space_id", "有" if wiki.get("space_id") else "缺", "先在已有的知识空间里找（名字可能不一样），确认没有再建：研究员确认后由 setup 技能执行，或者研究员自己执行 `lark-cli wiki +space-create --name \"<知识空间名>\" --description \"<一句话>\" --as user`，再重跑 `setup.py feishu --live --apply`"],
     ]
     lines += ["## 读回", "", orgspec.md_table(["项", "现状", "怎么补"], readback), ""]
     lines += ["## 网页上还要做的事", "",
-              "下面几项脚本核对不了，由研究员在网页上做，做完自己勾掉：", "",
-              bullets(["六种类型的详情页布局：默认“基本信息”里只有“名称”，把主文档、来源工作项、发出方、负责会话、截止时间等字段放进去，人在页面上才看得到。",
-                       "项目详情页加一个标签页，名为“%s”，放一个“工作项视图”控件，列出这个项目下的%s。" % (spec.term("wi", "same_seq"), spec.term("wi", "same_seq")),
+              "下面几项脚本核对不了，在网页上做（可以由会话代点），做完自己勾掉：", "",
+              bullets(["六种类型的详情页布局：默认“基本信息”里只有“名称”，把主文档、来源工作项、发出方、负责会话、截止时间等字段放进去，人在页面上才看得到。在模板空间里做，复制时一起带过来。",
+                       "项目详情页加一个标签页，名为“%s”，放一个“工作项视图”控件，列出这个项目下的%s。也在模板空间里做。" % (spec.term("wi", "same_seq"), spec.term("wi", "same_seq")),
                        "知识库里给人看的参考（可选）：五份包模板（源文件在 `.claude/agent-org/templates/`）和字段字典（`feishu/field-dictionary.md`）。插件只读本地副本，放进知识库只是方便人翻看。"]), ""]
     return "\n".join(lines)
 
@@ -1211,7 +1246,7 @@ def cli_json(cmd, timeout=60):
         raise SetupError("%s 的输出不是 JSON" % " ".join(cmd[:4]))
 
 
-def find_project(data, wanted):
+def find_project(data, wanted, fix=None):
     """The one project in `meegle project search` whose name, simple_name or project_key equals wanted."""
     projects = data.get("projects") if isinstance(data, dict) else data
     if not isinstance(projects, list):
@@ -1221,9 +1256,22 @@ def find_project(data, wanted):
     if len(hits) != 1:
         cands = "；".join("%s（simple_name %s，project_key %s）" % (p.get("name"), p.get("simple_name"), p.get("project_key"))
                           for p in projects or []) or "无"
-        raise SetupError("按“%s”找到 %d 个飞书项目空间，要正好一个。候选：%s。把准确的 simple_name 或 project_key 写进 init --task 用的任务文件的 feishu.meegle_space，重跑 init --apply（spec/task.json 跟着更新；手改过它的，init 会写成 spec/task.json.new，对照合并），再重跑这条命令" % (
-            wanted, len(hits), cands))
+        raise SetupError("按“%s”找到 %d 个飞书项目空间，要正好一个。候选：%s。%s" % (wanted, len(hits), cands, fix or (
+            "把准确的 simple_name 或 project_key 写进 init --task 用的任务文件的 feishu.meegle_space，重跑 init --apply"
+            "（spec/task.json 跟着更新；手改过它的，init 会写成 spec/task.json.new，对照合并），再重跑这条命令")))
     return hits[0]
+
+
+def export_dictionary(project_key, space_name, export_dir):
+    """Export a space's field dictionary into export_dir and load it."""
+    code, out, err = run([sys.executable, "-I", os.path.join(HERE, "export_field_dictionary.py"), "--project-key",
+                          project_key, "--out-dir", export_dir, "--space-name", space_name or ""], 300)
+    if code != 0:
+        raise SetupError("导出字段字典失败（退出码 %s）：%s" % (code, (err or out or "")[-500:]))
+    try:
+        return json.loads(read_text(os.path.join(export_dir, "field-dictionary.json")))
+    except (OSError, ValueError) as e:
+        raise SetupError("读不了刚导出的字段字典：%s" % e)
 
 
 def optional_read(what, fn):
@@ -1255,14 +1303,7 @@ def read_back(spec, ids, task_feishu, export_dir, maps):
             m["types"] = {}
         m.update({"project_key": hit.get("project_key"), "simple_name": hit.get("simple_name"),
                   "space_name": hit.get("name") or m.get("space_name")})
-    code, out, err = run([sys.executable, "-I", os.path.join(HERE, "export_field_dictionary.py"), "--project-key",
-                          m["project_key"], "--out-dir", export_dir, "--space-name", m.get("space_name") or ""], 300)
-    if code != 0:
-        raise SetupError("导出字段字典失败（退出码 %s）：%s" % (code, (err or out or "")[-500:]))
-    try:
-        fd = json.loads(read_text(os.path.join(export_dir, "field-dictionary.json")))
-    except (OSError, ValueError) as e:
-        raise SetupError("读不了刚导出的字段字典：%s" % e)
+    fd = export_dictionary(m["project_key"], m.get("space_name"), export_dir)
     problems = bind(spec, ids, fd, maps)
     lark = ids.setdefault("lark", {})
     if not lark.get("researcher_open_id"):
@@ -1352,8 +1393,12 @@ def feishu(target, maps, live, apply):
         elif maps:
             raise SetupError("还没有字段字典，--map 没法核对：先跑 setup.py feishu --live")
         found_views = (ids.get("meegle") or {}).get("views_found")
+    blank = fd is not None and not (ids.get("meegle") or {}).get("types")
     if apply and fd is not None:
-        ids["meegle"]["bound_at"] = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+        if blank:                                    # nothing bound: the ledger keeps refusing
+            ids["meegle"].pop("bound_at", None)
+        else:
+            ids["meegle"]["bound_at"] = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
     for n in notes:
         print("提醒：" + n)
     files = {ids_path: dump_json(ids), os.path.join(fd_dir, "migration.md"): migration_md(spec, ids, fd, found_views, problems)}
@@ -1367,12 +1412,18 @@ def feishu(target, maps, live, apply):
         print("还没有字段字典，绑定不了：加 --live 从空间读。")
     else:
         print("绑定：%s" % ("没有问题" if not problems else "%d 个问题，见 feishu/migration.md 的“要处理的问题”" % len(problems)))
+    if blank:
+        print("空间“%s”里没有一种类型对得上插件的规则。项目空间要从模板空间“%s”复制：先用 `setup.py template --live` 核对模板，"
+              "再用模板的“分享空间配置”复制出项目空间，步骤见 setup 技能的搭建手册（references/build-space.md）；"
+              "企业里还没有模板的，先照手册搭模板。空间里其实有这些类型、只是名字不同的，用 --map 指认。" % (
+                  (ids.get("meegle") or {}).get("space_name") or task.get("meegle_space") or "", template_space(task)))
     if not apply:
         if export_dir:
             shutil.rmtree(export_dir, ignore_errors=True)
         print("这是预览。核对绑定结果后加 --apply 写入；台账脚本在绑定写入以后才能用。")
-        print()
-        print(files[os.path.join(fd_dir, "migration.md")])
+        if not blank:                                # a blank space gets the hint, not the whole list
+            print()
+            print(files[os.path.join(fd_dir, "migration.md")])
         return 0
     os.makedirs(fd_dir, exist_ok=True)
     if os.path.isfile(ids_path) and raw.get("schema") != "agent-org/ids-v1":
@@ -1388,6 +1439,42 @@ def feishu(target, maps, live, apply):
         with open(p, "w", encoding="utf-8") as fh:
             fh.write(content)
     print("已写入 feishu/ids.json 和 feishu/migration.md。")
+    if blank:
+        print("一种类型都没绑上：这次只记下空间和 open_id，没写绑定时间，台账脚本仍然不读写飞书。")
+    return 0
+
+
+def check_template(target, space):
+    """Check a space as the template project spaces are copied from. Reads Feishu, writes nothing."""
+    spec = orgspec.OrgSpec()
+    if not space:
+        task = (load_json_file(os.path.join(target, "spec", "task.json")) or {}).get("feishu") or {} if target else {}
+        space = template_space(task)
+    hit = find_project(cli_json(["meegle", "project", "search", "--project-key", space, "--format", "json"]), space,
+                       "把模板空间的准确名字、simple_name 或 project_key 用 --space 传进来，或者写进任务文件的 feishu.template_space")
+    export_dir = tempfile.mkdtemp(prefix="agent-org-template-")
+    try:
+        fd = export_dictionary(hit.get("project_key"), hit.get("name"), export_dir)
+    finally:
+        shutil.rmtree(export_dir, ignore_errors=True)
+    ids = {"meegle": {}}
+    problems = bind(spec, ids, fd, {}, template=True)
+    print("模板空间“%s”（simple_name %s，project_key %s）。只读了飞书，没写任何文件。" % (
+        hit.get("name"), hit.get("simple_name"), hit.get("project_key")))
+    print()
+    print(binding_table(spec, ids, "对上的字段"))
+    print()
+    if problems:
+        print("## 要处理的问题")
+        print()
+        print(orgspec.md_table(["对象", "问题", "怎么办"], problems))
+        print()
+        print(structure_md(spec, ids))
+    print("流转、流转表单和详情页脚本读不到，照 setup 技能的搭建手册（references/build-space.md）在网页上核对。")
+    if problems:
+        print("还有 %d 个问题，补好以后再跑一次 setup.py template --live。" % len(problems))
+        return 1
+    print("可以当模板：项目空间从这里复制以后，绑定不用 --map。")
     return 0
 
 
@@ -1416,6 +1503,10 @@ def main(argv=None):
                    help="指认空间里名字不同的类型或字段：<类型标识>=<类型名> 或 <类型标识>.<字段标识>=<字段名或 field_key>，可重复")
     p.add_argument("--live", action="store_true")
     p.add_argument("--apply", action="store_true")
+    p = sub.add_parser("template")
+    p.add_argument("--space", help="要核对的模板空间：名字、simple_name 或 project_key；不写就用任务文件的 feishu.template_space，再没有就用 std_template")
+    p.add_argument("--target", help="项目目录：从它的 spec/task.json 读 feishu.template_space")
+    p.add_argument("--live", action="store_true", help="这条命令总是只读飞书，写不写都一样；和 feishu --live 的写法一致")
     p = sub.add_parser("check")
     p.add_argument("--target", required=True)
     args = ap.parse_args(argv)
@@ -1432,6 +1523,8 @@ def main(argv=None):
             return 0
         if args.cmd == "feishu":
             return feishu(os.path.abspath(args.target), args.map, args.live, args.apply)
+        if args.cmd == "template":
+            return check_template(os.path.abspath(args.target) if args.target else None, args.space)
         if args.cmd == "check":
             return check(os.path.abspath(args.target))
     except SetupError as e:

@@ -760,7 +760,7 @@ class ReadBackTest(ProjectCase):
         self.assertIn("| 反馈的“主文档” | 空间里没有 |", md)
         self.assertIn("缺选项：下发、执行", md)
         self.assertIn("## 网页上还要做的事", md)
-        self.assertNotIn("模板空间", md)
+        self.assertIn("项目空间从模板空间（默认叫 std_template）", md)
         self.assertIn("研究员的 open_id", md)
         self.assertIn("| 阻塞 | 同序列需求 | 待核对 |", md)
         self.assertIn("| 决策队列 | 决策 | 已有 | 确认已放进空间置顶", md)
@@ -1971,7 +1971,7 @@ class SixthRoundLedgerTest(ProjectCase):
         md = setup.migration_md(self.spec, ids, None, None)
         self.assertIn("五份包模板", md[md.index("## 网页上还要做的事"):])
         self.assertNotIn("分享链接", md)
-        self.assertNotIn("模板空间", md)
+        self.assertIn("在模板空间里做", md[md.index("## 网页上还要做的事"):])
 
 class SeventhRoundTest(ProjectCase):
     """Cases from the sixth check, which stopped half way: its repro scripts were replayed by hand."""
@@ -2431,7 +2431,7 @@ class SpecAndRoutingTest(ProjectCase):
         keys = [space["project_key"], space["simple_name"]] + [t["type_key"] for t in space["types"].values()]
         keys += [x["field_key"] for fields in space["fields"].values() for x in fields.values()]
         words = ["Coze" + "Loop", "coze" + "loop", "eval_" + "resources", "Auto" + "Research", "MC" + "GS", "贝索" + "斯",
-                 "Claude in " + "Chrome", "前" + "文", "模板" + "空间", "分享" + "链接"]
+                 "Claude in " + "Chrome", "前" + "文"]
         pattern = re.compile("|".join(re.escape(w) for w in words + sorted(set(keys))))
         hits = []
         for base, dirs, files in os.walk(REPO):
@@ -2518,6 +2518,126 @@ class SpecAndRoutingTest(ProjectCase):
             with self.assertRaises(setup.SetupError) as e:
                 setup.load_task(self.write_task(dict(base, editable_paths=[written]), "bad.json"))
             self.assertTrue(str(e.exception).endswith("：" + written), str(e.exception))
+
+
+class TemplateSpaceTest(ProjectCase):
+    """The template space project spaces are copied from, and a project space that is still blank."""
+
+    def fake_cli(self, fd, name="std_template"):
+        calls = []
+
+        def fake_run(cmd, timeout=30):
+            calls.append(cmd)
+            s = " ".join(cmd)
+            if "export_field_dictionary.py" in s:
+                with open(os.path.join(cmd[cmd.index("--out-dir") + 1], "field-dictionary.json"), "w", encoding="utf-8") as f:
+                    json.dump(fd, f, ensure_ascii=False)
+                return 0, "{}", ""
+            if "project search" in s:
+                hit = cmd[cmd.index("--project-key") + 1] == name
+                return 0, json.dumps({"projects": [{"name": name, "simple_name": "sn", "project_key": "pk_" + name}] if hit else []}), ""
+            if "whoami" in s:
+                return 0, json.dumps({"identity": "user", "onBehalfOf": {"openId": "ou_x"}}), ""
+            if "+space-list" in s:
+                return 0, json.dumps({"data": {"items": []}}), ""
+            return 1, "", "unexpected: %s" % s
+        return fake_run, calls
+
+    def with_cli(self, fake_run, fn, *args):
+        real = setup.run
+        setup.run = fake_run
+        try:
+            return self.run_quiet(fn, *args)
+        finally:
+            setup.run = real
+
+    def set_task(self, **feishu):
+        path = os.path.join(self.tmp, "spec", "task.json")
+        with open(path, encoding="utf-8") as f:
+            task = json.load(f)
+        task["feishu"].update(feishu)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(task, f, ensure_ascii=False)
+
+    def test_a_template_that_matches_the_rules(self):
+        _, fd = fake_feishu(self.spec)
+        fake_run, calls = self.fake_cli(fd)
+        before = sorted(os.listdir(os.path.join(self.tmp, "feishu")))
+        code, out = self.with_cli(fake_run, setup.check_template, None, None)
+        self.assertEqual(code, 0)
+        self.assertTrue(out.rstrip().endswith("绑定不用 --map。"), out[-200:])
+        self.assertIn("std_template", next(c for c in calls if "search" in c))
+        self.assertEqual(sorted(os.listdir(os.path.join(self.tmp, "feishu"))), before)
+
+    def test_a_template_with_other_names_is_told_to_rename(self):
+        _, fd = fake_feishu(self.spec)
+        for t in fd["types"].values():
+            if t["name"] == "同序列需求":
+                t["name"] = "任务包"
+            for f in t["fields"]:
+                if f["name"] == "渠道":
+                    f["name"] = "来源渠道"
+        fake_run, _ = self.fake_cli(fd)
+        code, out = self.with_cli(fake_run, setup.check_template, None, None)
+        self.assertEqual(code, 1)
+        self.assertIn("改名为“同序列需求”", out)
+        self.assertIn("| 决策的“渠道” | 空间里没有 | 建一个单选字段，名字写“渠道”", out)
+        self.assertIn("改成这个名字", out)
+        self.assertIn("## 每种类型要有的东西", out)
+        self.assertNotIn("--map", out)
+
+    def test_template_command_takes_live_or_not(self):
+        _, fd = fake_feishu(self.spec)
+        fake_run, _ = self.fake_cli(fd)
+        for argv in (["template", "--live"], ["template"], ["template", "--space", "std_template", "--live"]):
+            code, out = self.with_cli(fake_run, setup.main, argv)
+            self.assertEqual(code, 0, argv)
+            self.assertIn("可以当模板", out)
+
+    def test_template_name_comes_from_the_task_file(self):
+        self.set_task(template_space="lab_template")
+        _, fd = fake_feishu(self.spec)
+        fake_run, calls = self.fake_cli(fd, name="lab_template")
+        code, _ = self.with_cli(fake_run, setup.check_template, self.tmp, None)
+        self.assertEqual(code, 0)
+        self.assertIn("lab_template", next(c for c in calls if "search" in c))
+        fake_run, _ = self.fake_cli(fd)
+        with self.assertRaises(setup.SetupError) as ctx:
+            self.with_cli(fake_run, setup.check_template, self.tmp, None)
+        self.assertIn("feishu.template_space", str(ctx.exception))
+
+    def test_states_missing_from_a_flow(self):
+        ids, fd = fake_feishu(self.spec)
+        for t in fd["types"].values():
+            if t["name"] == "决策":
+                t["fields"].append({"field_key": "work_item_status", "name": "状态", "field_type": "_work_item_status",
+                                    "options": [{"id": "s%d" % i, "name": n} for i, n in enumerate(["待决定", "已决定", "已终止"])]})
+        problems = setup.bind(self.spec, ids, fd, {})
+        rows = [p for p in problems if p[0] == "决策"]
+        self.assertEqual(len(rows), 1)
+        self.assertIn("已执行", rows[0][1])
+        self.assertIn("已过期", rows[0][1])
+        self.assertFalse([p for p in problems if p[0] != "决策"])     # a dictionary without the status field is not judged
+
+    def test_a_blank_space_points_to_the_template(self):
+        self.set_task(meegle_space="Blank-Project")
+        ids_path = os.path.join(self.tmp, "feishu", "ids.json")
+        with open(ids_path, "w", encoding="utf-8") as f:
+            json.dump({"schema": "agent-org/ids-v1", "lark": {}, "meegle": {}, "wiki": {}}, f)
+        fd = {"project_key": "pk_Blank-Project", "types": {
+            "story": {"name": "需求", "fields": [{"field_key": "name", "name": "名称"}]},
+            "sub_task": {"name": "任务", "fields": [{"field_key": "name", "name": "名称"}]}}}
+        fake_run, _ = self.fake_cli(fd, name="Blank-Project")
+        _, out = self.with_cli(fake_run, setup.feishu, self.tmp, [], True, False)
+        self.assertIn("从模板空间“std_template”复制", out)
+        self.assertNotIn("## 每种类型要有的东西", out)
+        _, out = self.with_cli(fake_run, setup.feishu, self.tmp, [], True, True)
+        with open(ids_path, encoding="utf-8") as f:
+            saved = json.load(f)
+        self.assertEqual(saved["meegle"]["project_key"], "pk_Blank-Project")
+        self.assertEqual(saved["lark"]["researcher_open_id"], "ou_x")
+        self.assertNotIn("bound_at", saved["meegle"])
+        self.assertIn("没写绑定时间", out)
 
 
 if __name__ == "__main__":
