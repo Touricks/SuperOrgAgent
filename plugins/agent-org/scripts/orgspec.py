@@ -70,6 +70,13 @@ class OrgSpec:
         """[(id, Chinese name, abbreviation)] in rule order."""
         return [(s["id"], self.term("seq", s["id"]), s["abbrev"]) for s in self.rules["sequences"]]
 
+    def node_keys(self, seqs=None):
+        """The knowledge-base node skeleton as keys: the top-level nodes, then a node per sequence
+        under each node that has one (every sequence unless seqs names the enabled ones)."""
+        tree = self.rules["docs_tree"]
+        seqs = [s for s, _, _ in self.sequences()] if seqs is None else list(seqs)
+        return list(tree["nodes"]) + ["%s/%s" % (n, s) for n in tree["per_sequence"] for s in seqs]
+
     def sequence(self, sid):
         for s in self.rules["sequences"]:
             if s["id"] == sid:

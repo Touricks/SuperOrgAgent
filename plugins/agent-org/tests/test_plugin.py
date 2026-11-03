@@ -2812,5 +2812,66 @@ class SpaceSwitchTest(ProjectCase):
             self.assertIn("旧绑定一种类型都没绑上", f.read())
 
 
+class FeishuDocsTest(ProjectCase):
+    """The Feishu Docs side of setup: the knowledge space and the node skeleton."""
+
+    def edit_json(self, rel, fn):
+        path = os.path.join(self.tmp, rel)
+        with open(path, encoding="utf-8") as f:
+            obj = json.load(f)
+        fn(obj)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(obj, f, ensure_ascii=False)
+
+    def test_check_reports_what_the_feishu_side_lacks(self):
+        self.edit_json("feishu/ids.json", lambda d: d["wiki"]["nodes"].pop("review/alg"))
+        _, out = self.run_quiet(setup.check, self.tmp)
+        self.assertIn("知识库节点还缺 1 个（review/alg）", out)
+        self.assertIn("ensure-node all", out)
+        self.edit_json("feishu/ids.json", lambda d: d["wiki"]["nodes"].pop("review/infra"))
+        self.edit_json(".claude/agent-org/manifest.json",
+                       lambda m: m.update(sequences=[s for s, _, _ in self.spec.sequences() if s != "infra"]))
+        _, out = self.run_quiet(setup.check, self.tmp)
+        self.assertIn("知识库节点还缺 1 个（review/alg）", out)       # infra is not enabled: its node is not expected
+        self.edit_json("feishu/ids.json", lambda d: d["wiki"].pop("space_id"))
+        _, out = self.run_quiet(setup.check, self.tmp)
+        self.assertIn("还没有知识空间", out)
+        self.assertNotIn("知识库节点还缺", out)
+        self.edit_json("feishu/ids.json", lambda d: d["meegle"].pop("bound_at"))
+        code, out = self.run_quiet(setup.check, self.tmp)
+        self.assertEqual(code, 1)
+        self.assertIn("飞书项目空间还没绑定", out)
+        self.assertNotIn("还没有知识空间", out)
+
+    def test_ensure_node_all_builds_parents_first(self):
+        empty = {"ok": True, "data": {"nodes": [], "has_more": False}}
+        lg = StubLedger(self.tmp, "preview", [(("wiki", "+node-list"), empty)])
+        lg.nodes.clear()
+        _, out = self.run_quiet(ledger.ensure_all_nodes, lg)
+        top = self.spec.rules["docs_tree"]["nodes"]
+        self.assertEqual(len([p for p in lg.planned if "+node-create" in p]), len(top))
+        self.assertIn("节点 review/alg 要等上一级 review 建好", out)
+        self.edit_json("feishu/ids.json", lambda d: d["wiki"].update(nodes={}))
+        lg = StubLedger(self.tmp, "apply", [(("wiki", "+node-list"), empty),
+                                            (("wiki", "+node-create"), {"data": {"node": {"node_token": "wikNew0001"}}})])
+        lg.nodes.clear()
+        self.run_quiet(ledger.ensure_all_nodes, lg)
+        creates = [c[0] for c in lg.calls if "+node-create" in c[0]]
+        keys = self.spec.node_keys()
+        self.assertEqual(len(creates), len(keys))
+        self.assertFalse([c for c in creates[:len(top)] if "--parent-node-token" in c])
+        self.assertTrue(all("--parent-node-token" in c for c in creates[len(top):]))
+        with open(os.path.join(self.tmp, "feishu", "ids.json"), encoding="utf-8") as f:
+            self.assertEqual(sorted(json.load(f)["wiki"]["nodes"]), sorted(keys))
+
+    def test_migration_tells_how_to_build_the_skeleton(self):
+        ids, fd = fake_feishu(self.spec)
+        ids["wiki"]["nodes"] = {}
+        md = setup.migration_md(self.spec, ids, fd, {}, [], seqs=["alg", "quality", "pmo"])
+        self.assertIn("`ledger.py ensure-node all`", md)
+        self.assertIn("review/alg", md)
+        self.assertNotIn("review/infra", md)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

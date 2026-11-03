@@ -43,7 +43,7 @@ python3 -I .claude/agent-org/bin/ledger.py mql queue          # 只打印 MQL
 | 替换状态包 | `status-block <ID> --file <文件>` | 找到主文档里“状态包”到“交接记录”之间的块，整段 block_replace |
 | 追加交接记录 | `append <ID> --file <文件>` | 第一行要带会话标签；追加到文末 |
 | 归档 | `archive <ID>` | 把主文档整棵子树移到“归档文档/<序列>”下，移动的是原节点，链接不变；没有这个序列的归档节点就停下，先 ensure-node；之后再流转到“归档” |
-| 建知识库节点 | `ensure-node <键>` | 比如 `feedback`、`review/alg`。先用 `wiki +node-list` 查上一级节点下有没有同名的节点，有就直接用；没有才建。都写进 `feishu/ids.json` |
+| 建知识库节点 | `ensure-node <键>`、`ensure-node all` | 比如 `feedback`、`review/alg`；`all` 一次建齐整个骨架，先建一级节点，再建各序列的节点。先用 `wiki +node-list` 查上一级节点下有没有同名的节点，有就直接用；没有才建。都写进 `feishu/ids.json` |
 
 几条规则：
 

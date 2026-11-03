@@ -19,6 +19,7 @@ commands first; nothing is written without --apply:
     ledger.py append <ID> --file F          append to 交接记录 (first line carries the session tag)
     ledger.py archive <ID>                  move the main document subtree to 归档文档/<序列>
     ledger.py ensure-node <key>             create a knowledge-base node such as feedback or review/alg
+    ledger.py ensure-node all               create the whole node skeleton, parents first
 
 Fields are named by rule identifiers (sequence, sender, source_item, ...); values
 are converted with feishu/field-dictionary.json. Dates are written as UTC noon.
@@ -1510,10 +1511,23 @@ def ensure_node(lg, key):
         with open(path, "w", encoding="utf-8") as f:
             json.dump(ids, f, ensure_ascii=False, indent=2)
             f.write("\n")
+        lg.nodes[key] = record                         # a child created next in the same run finds it
         if out is not None:
             print("已建节点 %s：%s，写进 feishu/ids.json。" % (key, record["node_token"]))
         else:
             print("写进 feishu/ids.json。")
+
+
+def ensure_all_nodes(lg):
+    """The whole node skeleton: the top-level nodes first, then the enabled sequences' nodes
+    under them. Nodes already recorded, or already in the space under the same title, are kept."""
+    manifest = load_json(os.path.join(lg.root, ".claude", "agent-org", "manifest.json"), {})
+    for key in lg.spec.node_keys(manifest.get("sequences") or None):
+        head, _, seq = key.partition("/")
+        if seq and not (lg.nodes.get(head) or {}).get("node_token"):
+            print("节点 %s 要等上一级 %s 建好：加 --apply 时先建上一级，再建它。" % (key, head))
+            continue
+        ensure_node(lg, key)
 
 
 # ---------------------------------------------------------------- reads
@@ -1765,7 +1779,10 @@ def main(argv=None):
         elif args.cmd == "archive":
             archive(lg, args.id)
         elif args.cmd == "ensure-node":
-            ensure_node(lg, args.key)
+            if args.key == "all":
+                ensure_all_nodes(lg)
+            else:
+                ensure_node(lg, args.key)
     except (LedgerError, orgspec.OrgSpecError, ET.ParseError, OSError) as e:
         print("出错：%s" % e)
         return 1

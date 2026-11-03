@@ -1001,10 +1001,34 @@ def check(target):
     for rel in m.get("pending_new", []):
         if os.path.isfile(os.path.join(target, rel + ".new")):
             problems.append("待合并：%s.new" % rel)
+    problems += feishu_gaps(target, m.get("sequences") or None)
     for p in problems:
         print("问题：" + p)
     print("检查：%s" % ("%d 个问题" % len(problems) if problems else "没有问题"))
     return 1 if problems else 0
+
+
+def feishu_gaps(target, seqs):
+    """What the project still lacks on the Feishu side, read from feishu/ids.json: the project
+    space binding, then the knowledge space, then the node skeleton."""
+    ids = load_json_file(os.path.join(target, "feishu", "ids.json")) or {}
+    meegle, wiki = ids.get("meegle") or {}, ids.get("wiki") or {}
+    if not (meegle.get("bound_at") and meegle.get("types")):
+        return ["飞书项目空间还没绑定：照 setup 技能第四步绑定"]
+    if not wiki.get("space_id"):
+        return ["还没有知识空间：照 setup 技能第四步“飞书文档”一节，研究员确认后建，再重跑 setup.py feishu --live --apply"]
+    nodes = wiki.get("nodes") or {}
+    missing = [k for k in orgspec.OrgSpec().node_keys(seqs) if not (nodes.get(k) or {}).get("node_token")]
+    if missing:
+        return ["知识库节点还缺 %d 个（%s）：照 setup 技能第四步“飞书文档”一节，用 ledger.py ensure-node all 建齐" % (
+            len(missing), "、".join(missing[:6]) + ("等" if len(missing) > 6 else ""))]
+    return []
+
+
+def enabled_sequences(target):
+    """The sequences init enabled in this project, from its manifest; None (every sequence) when unknown."""
+    m = load_json_file(os.path.join(target, ".claude", "agent-org", "manifest.json")) if target else None
+    return (m or {}).get("sequences") or None
 
 
 # -------------------------------------------------------------- feishu
@@ -1175,7 +1199,7 @@ def structure_md(spec, ids):
     return "\n".join(lines)
 
 
-def migration_md(spec, ids, fd, found_views=None, problems=None, switch=None):
+def migration_md(spec, ids, fd, found_views=None, problems=None, switch=None, seqs=None):
     m = ids.get("meegle") or {}
     lines = ["# 建空间与核对清单", "",
              "> 由 `setup.py feishu` 生成。项目空间从模板空间（默认叫 %s）用“分享空间配置”复制：类型、字段、流程、表单、角色和详情页跟着复制过来，条件视图和空间置顶不复制，每个项目空间各建一次。这里缺的结构先在模板里补上，以后复制的空间就都有；本空间也照样补一遍，已经复制出来的空间不会跟着模板变。补好以后重跑 `setup.py feishu --live --apply`。知识库节点由书记员用 `ledger.py ensure-node` 建。" % DEFAULT_TEMPLATE_SPACE,
@@ -1210,10 +1234,8 @@ def migration_md(spec, ids, fd, found_views=None, problems=None, switch=None):
               "条件视图只能在网页上建。新建视图的对话框只能放进“个人”，要放进空间置顶，在左侧“空间置顶”的“+”里选“添加现有”。显示列在视图右上角“…”→“设置视图展示”里改，改完点“存在本地变更”里的“保存”，才对所有人生效。脚本只能查到视图在不在，查不到它是否置顶。", ""]
     rows = []
     nodes = (ids.get("wiki") or {}).get("nodes") or {}
-    tree = spec.rules["docs_tree"]
-    seqs = [s for s, _, _ in spec.sequences()]
     renames = False
-    for key in list(tree["nodes"]) + ["%s/%s" % (n, s) for n in tree["per_sequence"] for s in seqs]:
+    for key in spec.node_keys(seqs):
         head, _, seq = key.partition("/")
         title = spec.term("node", head) + ("/" + spec.term("seq", seq) if seq else "")
         n = nodes.get(key)
@@ -1226,6 +1248,9 @@ def migration_md(spec, ids, fd, found_views=None, problems=None, switch=None):
             renames = True
             rows.append([title, "现名“%s”" % n.get("title"), "改名为“%s”" % spec.term("node", head)])
     lines += ["## 知识库节点", "", orgspec.md_table(["节点", "现状", "要做的"], rows) if rows else "无差异。", ""]
+    if any(r[1] == "没有" for r in rows):
+        lines += ["缺的节点可以一次建齐：`ledger.py ensure-node all`，先预览，研究员确认后加 `--apply`。它先建一级节点，再建各序列的节点；"
+                  "知识空间里已经有同名节点的直接用，不再建。要先有知识空间，步骤见 setup 技能第四步“飞书文档”一节。", ""]
     if renames:
         lines += ["命令行没有给知识库节点改名的子命令；节点标题跟着节点文档的一级标题走。先读一遍节点文档：是空的，书记员可以写入只有新标题的正文：`lark-cli docs +update --doc <节点链接> --command overwrite --doc-format markdown --content - --as user`，正文用 heredoc 传入一行 `# <新名>`；有内容的，在网页上改名，不要覆盖。", ""]
     lark = ids.get("lark") or {}
@@ -1234,7 +1259,7 @@ def migration_md(spec, ids, fd, found_views=None, problems=None, switch=None):
         ["project_key", "有" if m.get("project_key") else "缺", "跑 `setup.py feishu --live --apply`：按 `spec/task.json` 里的空间名精确查找"],
         ["simple_name", "有" if m.get("simple_name") else "缺", "同上；工作项链接要用它"],
         ["研究员的 open_id", "有" if lark.get("researcher_open_id") else "缺", "同上：从 `lark-cli whoami` 读；没有它，飞书私聊监听不启动"],
-        ["知识空间 space_id", "有" if wiki.get("space_id") else "缺", "先在已有的知识空间里找（名字可能不一样），确认没有再建：研究员确认后由 setup 技能执行，或者研究员自己执行 `lark-cli wiki +space-create --name \"<知识空间名>\" --description \"<一句话>\" --as user`，再重跑 `setup.py feishu --live --apply`"],
+        ["知识空间 space_id", "有" if wiki.get("space_id") else "缺", "先在已有的知识空间里找（名字可能不一样），确认没有再建：研究员确认后由 setup 技能执行，或者研究员自己执行 `lark-cli wiki +space-create --name \"<知识空间名>\" --description \"<一句话>\" --as user`，再重跑 `setup.py feishu --live --apply`；步骤见 setup 技能第四步“飞书文档”一节"],
     ]
     lines += ["## 读回", "", orgspec.md_table(["项", "现状", "怎么补"], readback), ""]
     lines += ["## 网页上还要做的事", "",
@@ -1498,7 +1523,8 @@ def feishu(target, maps, live, apply, leave_old=False):
                                                       old.get("project_key", ""), new.get("space_name"),
                                                       new.get("simple_name"), new.get("project_key")))
     files = {ids_path: dump_json(ids),
-             os.path.join(fd_dir, "migration.md"): migration_md(spec, ids, fd, found_views, problems, switch)}
+             os.path.join(fd_dir, "migration.md"): migration_md(spec, ids, fd, found_views, problems, switch,
+                                                                enabled_sequences(target))}
     for p, content in files.items():
         current = read_text(p) if os.path.isfile(p) else None
         state = "相同" if current == content else ("新建" if current is None else "更新")
