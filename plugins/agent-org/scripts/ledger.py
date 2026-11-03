@@ -1725,7 +1725,7 @@ def main(argv=None):
     mode = "offline" if args.offline else ("apply" if getattr(args, "apply", False) else "preview")
     lg = Ledger(project_root(), mode)
     m = lg.ids.get("meegle") or {}
-    if mode != "offline" and not m.get("bound_at"):
+    if mode != "offline" and not (m.get("bound_at") and m.get("types")):  # a binding time with no type is no binding
         print("出错：这个项目还没绑定飞书空间。先跑 setup.py feishu --target <项目目录> --live 看匹配结果，核对后加 --apply；"
               "绑定以前台账脚本不读也不写飞书。")
         return 1

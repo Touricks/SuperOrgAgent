@@ -1009,8 +1009,13 @@ def check(target):
 
 # -------------------------------------------------------------- feishu
 def normalise_ids(raw):
-    """ids.json as this version writes it. Any other shape starts empty: bind again with --live."""
+    """ids.json as this version writes it. Any other shape starts empty: bind again with --live.
+    A binding time without a single bound type (written before 0.2.0) counts as not bound."""
     if raw.get("schema") == "agent-org/ids-v1":
+        m = raw.get("meegle") or {}
+        if m.get("bound_at") and not m.get("types"):
+            m.pop("bound_at")
+            return raw, ["feishu/ids.json 记着绑定时间，却一种类型都没绑上（0.2.0 以前留下的空壳记录），按没绑定处理"]
         return raw, []
     notes = ["feishu/ids.json 不是这一版的格式，按空间重新绑定；--apply 时原文件备份成 ids.legacy.json"] if raw else []
     return {"schema": "agent-org/ids-v1", "lark": {}, "meegle": {}, "wiki": {}}, notes
@@ -1170,11 +1175,13 @@ def structure_md(spec, ids):
     return "\n".join(lines)
 
 
-def migration_md(spec, ids, fd, found_views=None, problems=None):
+def migration_md(spec, ids, fd, found_views=None, problems=None, switch=None):
     m = ids.get("meegle") or {}
     lines = ["# 建空间与核对清单", "",
              "> 由 `setup.py feishu` 生成。项目空间从模板空间（默认叫 %s）用“分享空间配置”复制：类型、字段、流程、表单、角色和详情页跟着复制过来，条件视图和空间置顶不复制，每个项目空间各建一次。这里缺的结构先在模板里补上，以后复制的空间就都有；本空间也照样补一遍，已经复制出来的空间不会跟着模板变。补好以后重跑 `setup.py feishu --live --apply`。知识库节点由书记员用 `ledger.py ensure-node` 建。" % DEFAULT_TEMPLATE_SPACE,
              "> 空间里已经有、只是名字和这里不同的，不必改名：用 `--map <类型标识>=<空间里的类型名>` 或 `--map <类型标识>.<字段标识>=<空间里的字段名>` 指认。绑定以后脚本按键找，空间里改名也不会断。", ""]
+    if switch:
+        lines += switch_md(switch)
     lines += ["## 绑定结果", "", binding_table(spec, ids), ""]
     lines += ["## 要处理的问题", ""]
     if problems is None:
@@ -1248,13 +1255,19 @@ def cli_json(cmd, timeout=60):
         raise SetupError("%s 的输出不是 JSON" % " ".join(cmd[:4]))
 
 
-def find_project(data, wanted, fix=None):
-    """The one project in `meegle project search` whose name, simple_name or project_key equals wanted."""
+def search_hits(data, wanted):
+    """The projects in a `meegle project search` answer, and those whose name, simple_name or
+    project_key equals wanted."""
     projects = data.get("projects") if isinstance(data, dict) else data
     if not isinstance(projects, list):
         projects = [d for d in ledger._walk(data) if isinstance(d, dict) and d.get("project_key")]
     projects = [p for p in projects if isinstance(p, dict)]
-    hits = [p for p in projects or [] if wanted in (p.get("name"), p.get("simple_name"), p.get("project_key"))]
+    return projects, [p for p in projects if wanted in (p.get("name"), p.get("simple_name"), p.get("project_key"))]
+
+
+def find_project(data, wanted, fix=None):
+    """The one project in `meegle project search` whose name, simple_name or project_key equals wanted."""
+    projects, hits = search_hits(data, wanted)
     if len(hits) != 1:
         cands = "；".join("%s（simple_name %s，project_key %s）" % (p.get("name"), p.get("simple_name"), p.get("project_key"))
                           for p in projects or []) or "无"
@@ -1285,26 +1298,67 @@ def optional_read(what, fn):
         return None
 
 
-def read_back(spec, ids, task_feishu, export_dir, maps):
+def old_space_items(spec, project_key, type_keys):
+    """What a space the project is leaving still holds, for the types its binding had: (types
+    with any work item, open work items as lines, types that could not be checked)."""
+    held, open_items, unchecked = [], [], []
+    stop = ledger.system_states(spec)
+    for w in spec.work_items():
+        tkey = type_keys.get(w["id"])
+        if not tkey:
+            continue
+        name = spec.term("wi", w["id"])
+
+        def query(mql):
+            return ledger.query_rows(cli_json(["meegle", "workitem", "query", "--project-key", project_key,
+                                               "--mql", mql, "--format", "json"]))
+        try:
+            rows = query("SELECT `work_item_id`, `name`, `work_item_status` FROM `%s`.`%s` WHERE %s LIMIT 20" % (
+                project_key, tkey, ledger._not_in(list(w.get("end_states") or []) + stop)))
+            anything = rows or query("SELECT `work_item_id` FROM `%s`.`%s` LIMIT 1" % (project_key, tkey))
+        except (SetupError, ledger.LedgerError) as e:
+            print("提醒：没能查旧空间里的%s：%s" % (name, e))
+            unchecked.append(name)
+            continue
+        if anything:
+            held.append(name)
+        open_items += ["%s #%s %s（%s）" % (name, r.get("work_item_id"), r.get("name") or "", r.get("work_item_status") or "")
+                       for r in rows]
+    return held, open_items, unchecked
+
+
+def read_back(spec, ids, task_feishu, export_dir, maps, switch=None):
     """Find the project's space, export its field dictionary, bind the rules to it, and read
     open_id, space_id, node titles and views. Returns (field dictionary, {view: True/False/None},
-    binding problems)."""
+    binding problems). The space the task file names is looked up every time: a name can come to
+    mean another space, a key cannot. When it is not the space bound last time, the old binding
+    is dropped and `switch` gets both spaces and what the old one still holds."""
     m = ids["meegle"]
-    named = str(task_feishu.get("meegle_space") or "").strip()
-    moved = named and m.get("project_key") and named not in [m.get(k) for k in ("project_key", "simple_name", "space_name")]
-    if not m.get("project_key") or not m.get("simple_name") or moved:
-        wanted = named if moved or not m.get("project_key") else m["project_key"]
-        if not wanted:
-            raise SetupError("ids.json 里没有 project_key，研究任务里也没写飞书项目空间：把空间名写进 init --task 用的任务文件的 feishu.meegle_space，重跑 init --apply，再重跑这条命令")
-        hit = find_project(cli_json(["meegle", "project", "search", "--project-key", wanted, "--format", "json"]), wanted)
-        if m.get("project_key") and hit.get("project_key") != m["project_key"]:
-            print("提醒：任务文件里的空间“%s”不是上次绑定的“%s”，按新空间重新绑定，原来的绑定作废" % (
-                wanted, m.get("space_name") or m["project_key"]))
-            for k in ("field_keys", "views_found", "bound_at"):
-                m.pop(k, None)
-            m["types"] = {}
-        m.update({"project_key": hit.get("project_key"), "simple_name": hit.get("simple_name"),
-                  "space_name": hit.get("name") or m.get("space_name")})
+    wanted = str(task_feishu.get("meegle_space") or "").strip() or m.get("project_key")
+    if not wanted:
+        raise SetupError("ids.json 里没有 project_key，研究任务里也没写飞书项目空间：把空间名写进 init --task 用的任务文件的 feishu.meegle_space，重跑 init --apply，再重跑这条命令")
+    data = cli_json(["meegle", "project", "search", "--project-key", wanted, "--format", "json"])
+    if not search_hits(data, wanted)[1] and m.get("project_key") and wanted == m.get("space_name"):
+        print("提醒：按“%s”找不到空间，可能在飞书里改了名；接着用上次绑定的空间（simple_name %s，project_key %s）。"
+              "把任务文件的 feishu.meegle_space 改成新名字或 simple_name" % (wanted, m.get("simple_name"), m["project_key"]))
+        hit = {"project_key": m["project_key"], "simple_name": m.get("simple_name"), "name": m.get("space_name")}
+    else:
+        hit = find_project(data, wanted)
+    if m.get("project_key") and hit.get("project_key") != m["project_key"]:
+        print("提醒：任务文件里的空间“%s”不是上次绑定的“%s”，这是换空间：按新空间重新绑定，原来的绑定作废" % (
+            wanted, m.get("space_name") or m["project_key"]))
+        old_types = {wid: t.get("type_key") for wid, t in (m.get("types") or {}).items() if t.get("type_key")}
+        held, open_items, unchecked = old_space_items(spec, m["project_key"], old_types)
+        if switch is not None:
+            switch.update({"old": {k: m[k] for k in ("project_key", "simple_name", "space_name", "bound_at") if m.get(k)},
+                           "new": {"project_key": hit.get("project_key"), "simple_name": hit.get("simple_name"),
+                                   "space_name": hit.get("name")},
+                           "bound_types": len(old_types), "held": held, "open": open_items, "unchecked": unchecked})
+        for k in ("field_keys", "views_found", "bound_at"):
+            m.pop(k, None)
+        m["types"] = {}
+    m.update({"project_key": hit.get("project_key"), "simple_name": hit.get("simple_name"),
+              "space_name": hit.get("name") or m.get("space_name")})
     fd = export_dictionary(m["project_key"], m.get("space_name"), export_dir)
     problems = bind(spec, ids, fd, maps)
     lark = ids.setdefault("lark", {})
@@ -1362,7 +1416,32 @@ def read_back(spec, ids, task_feishu, export_dir, maps):
     return fd, found, problems
 
 
-def feishu(target, maps, live, apply):
+def switch_md(switch):
+    """The 换空间 section of migration.md: both spaces, what the old binding loses and what the
+    old space still holds."""
+    o, n = switch["old"], switch["new"]
+    rows = [["旧空间", o.get("space_name", ""), o.get("simple_name", ""), o.get("project_key", "")],
+            ["新空间", n.get("space_name") or "", n.get("simple_name") or "", n.get("project_key") or ""]]
+    lines = ["## 换空间", "",
+             "任务文件指的空间和上次绑定的不是同一个，这次按新空间重新绑定，原来的类型、字段和视图绑定作废。知识库不跟着换。", "",
+             orgspec.md_table(["", "空间名", "simple_name", "project_key"], rows), ""]
+    if switch["held"]:
+        lines += ["旧空间里还有工作项：%s。插件搬不了工作项，它们留在旧空间当档案，台账以后不再读写；没办完的要不要在新空间重建，"
+                  "由研究员逐条决定。研究员确认以后，写入时加 `--leave-old-items`。" % "、".join(switch["held"]), ""]
+        if switch["open"]:
+            lines += ["没办完的（每种类型最多列 20 条）：", "", bullets(switch["open"]), ""]
+    if switch["unchecked"]:
+        lines += ["没查成旧空间里的%s有没有工作项。确认旧空间已经删了，或者里面的工作项可以留在原处，写入时加 `--leave-old-items`。"
+                  % "、".join(switch["unchecked"]), ""]
+    if not switch["held"] and not switch["unchecked"]:
+        lines += ["旧空间里没有工作项，可以直接写入。" if switch["bound_types"] else
+                  "旧绑定一种类型都没绑上，台账没在旧空间里记过东西，可以直接写入。", ""]
+    lines += ["写入时 `feishu/ids.json` 的 `previous_spaces` 记下旧空间和换出的时间，本地记录里旧的工作项 ID 还能查到属于哪个空间。"
+              "旧空间留不留由研究员决定，删空间只能研究员本人做。", ""]
+    return lines
+
+
+def feishu(target, maps, live, apply, leave_old=False):
     spec = orgspec.OrgSpec()
     task = (load_json_file(os.path.join(target, "spec", "task.json")) or {}).get("feishu") or {}
     maps = parse_maps(spec, maps)
@@ -1371,13 +1450,13 @@ def feishu(target, maps, live, apply):
     raw = load_json_file(ids_path) or {}
     ids, notes = normalise_ids(raw)
     fd = load_json_file(os.path.join(fd_dir, "field-dictionary.json"))
-    found_views, export_dir, problems = None, None, None
+    found_views, export_dir, problems, switch = None, None, None, {}
     if live:
         if apply:
             os.makedirs(fd_dir, exist_ok=True)
         export_dir = tempfile.mkdtemp(prefix=".export-", dir=fd_dir if apply else None)
         try:
-            fd, found_views, problems = read_back(spec, ids, task, export_dir, maps)
+            fd, found_views, problems = read_back(spec, ids, task, export_dir, maps, switch)
         except SetupError:
             shutil.rmtree(export_dir, ignore_errors=True)
             raise
@@ -1385,6 +1464,12 @@ def feishu(target, maps, live, apply):
             shutil.rmtree(export_dir, ignore_errors=True)
             raise SetupError("读回时遇到没见过的输出（%s: %s）；什么都没写" % (type(e).__name__, e))
         ids["meegle"]["views_found"] = found_views
+        if switch and apply and not leave_old and (switch["held"] or switch["unchecked"]):
+            shutil.rmtree(export_dir, ignore_errors=True)
+            why = ("旧空间“%s”里还有工作项（%s）" % (switch["old"].get("space_name", ""), "、".join(switch["held"]))
+                   if switch["held"] else "没查成旧空间里的%s有没有工作项" % "、".join(switch["unchecked"]))
+            raise SetupError(why + "，什么都没写。插件搬不了工作项，换空间以后它们留在旧空间，台账不再读写。先去掉 --apply 预览，"
+                             "看 migration.md 的“换空间”一节；研究员确认这些工作项可以留在旧空间以后，再加 --leave-old-items 写入")
     else:
         moved = ledger.other_space({"feishu": task}, ids.get("meegle") or {})
         if moved:
@@ -1396,14 +1481,24 @@ def feishu(target, maps, live, apply):
             raise SetupError("还没有字段字典，--map 没法核对：先跑 setup.py feishu --live")
         found_views = (ids.get("meegle") or {}).get("views_found")
     blank = fd is not None and not (ids.get("meegle") or {}).get("types")
+    stamp = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
     if apply and fd is not None:
         if blank:                                    # nothing bound: the ledger keeps refusing
             ids["meegle"].pop("bound_at", None)
         else:
-            ids["meegle"]["bound_at"] = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+            ids["meegle"]["bound_at"] = stamp
+    if switch and apply:
+        ids["meegle"].setdefault("previous_spaces", []).append(dict(switch["old"], left_at=stamp, items_left=switch["held"]))
     for n in notes:
         print("提醒：" + n)
-    files = {ids_path: dump_json(ids), os.path.join(fd_dir, "migration.md"): migration_md(spec, ids, fd, found_views, problems)}
+    if switch:
+        old, new = switch["old"], switch["new"]
+        print("换空间：旧空间“%s”（simple_name %s，project_key %s）→ 新空间“%s”（simple_name %s，project_key %s），"
+              "详见 feishu/migration.md 的“换空间”一节。" % (old.get("space_name", ""), old.get("simple_name", ""),
+                                                      old.get("project_key", ""), new.get("space_name"),
+                                                      new.get("simple_name"), new.get("project_key")))
+    files = {ids_path: dump_json(ids),
+             os.path.join(fd_dir, "migration.md"): migration_md(spec, ids, fd, found_views, problems, switch)}
     for p, content in files.items():
         current = read_text(p) if os.path.isfile(p) else None
         state = "相同" if current == content else ("新建" if current is None else "更新")
@@ -1520,6 +1615,8 @@ def main(argv=None):
                    help="指认空间里名字不同的类型或字段：<类型标识>=<类型名> 或 <类型标识>.<字段标识>=<字段名或 field_key>，可重复")
     p.add_argument("--live", action="store_true")
     p.add_argument("--apply", action="store_true")
+    p.add_argument("--leave-old-items", action="store_true",
+                   help="换空间时旧空间里还有工作项：研究员确认它们留在旧空间、台账以后不再读写，才加这个参数写入")
     p = sub.add_parser("template")
     p.add_argument("--space", help="要核对的模板空间：名字、simple_name 或 project_key；不写就用任务文件的 feishu.template_space，再没有就用 std_template")
     p.add_argument("--target", help="项目目录：从它的 spec/task.json 读 feishu.template_space")
@@ -1539,7 +1636,7 @@ def main(argv=None):
                 apply_plan(target, plan, acts)
             return 0
         if args.cmd == "feishu":
-            return feishu(os.path.abspath(args.target), args.map, args.live, args.apply)
+            return feishu(os.path.abspath(args.target), args.map, args.live, args.apply, args.leave_old_items)
         if args.cmd == "template":
             return check_template(os.path.abspath(args.target) if args.target else None, args.space)
         if args.cmd == "check":

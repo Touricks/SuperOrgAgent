@@ -1,6 +1,6 @@
 ---
 name: setup
-description: 在一个项目目录里初始化智能体组织：预检本机的飞书客户端、lark-cli、meegle、Claude Code 和 Python；生成七个序列三个职级的子智能体、入口 pmo-p2、项目权限和 hook、CLAUDE.md、org/、packages/、inbox/、spec/；搭飞书项目的模板空间（默认叫 std_template），从它复制出项目空间，再把插件规则绑定到项目空间，列出还要建或要核对的东西。用户说“初始化组织”“部署到这个目录”“在新电脑上装起来”“检查部署有没有漂移”“搭模板空间”“把飞书空间接上”“绑定空间”时使用。不替用户开通飞书权限；在网页上搭空间、复制空间要用户先确认，不删飞书里的任何东西。
+description: 在一个项目目录里初始化智能体组织：预检本机的飞书客户端、lark-cli、meegle、Claude Code 和 Python；生成七个序列三个职级的子智能体、入口 pmo-p2、项目权限和 hook、CLAUDE.md、org/、packages/、inbox/、spec/；搭飞书项目的模板空间（默认叫 std_template），从它复制出项目空间，再把插件规则绑定到项目空间，列出还要建或要核对的东西。用户说“初始化组织”“部署到这个目录”“在新电脑上装起来”“检查部署有没有漂移”“搭模板空间”“把飞书空间接上”“绑定空间”“换空间”时使用。不替用户开通飞书权限；在网页上搭空间、复制空间要用户先确认，不删飞书里的任何东西。
 ---
 
 # 初始化智能体组织
@@ -70,7 +70,7 @@ python3 -I "$PLUGIN/scripts/setup.py" feishu --target <项目目录> --live     
 python3 -I "$PLUGIN/scripts/setup.py" feishu --target <项目目录> --live --apply   # 核对以后写入
 ```
 
-脚本按空间名精确找到空间，导出字段字典，再逐项匹配：先看 `--map` 指认的，再看上次绑定的键还在不在，最后按名字找。字段只认自定义字段（field_key 以 `field_` 开头），核对字段类型和选项，同名的不自动选。它还读回模板 ID、研究员的 open_id 和知识空间的 space_id，按名字查六个条件视图在不在。全是读操作；可选的几项读不到只提醒，不中断。空间里一种插件类型都对不上时，脚本只提示从模板复制，不打印整份清单；这时 `--apply` 只记下空间和 open_id，不写绑定时间。
+脚本每次都按任务文件写的空间去飞书精确查找（名字可能换了指向，key 不会），导出字段字典，再逐项匹配：先看 `--map` 指认的，再看上次绑定的键还在不在，最后按名字找。字段只认自定义字段（field_key 以 `field_` 开头），核对字段类型和选项，同名的不自动选。它还读回模板 ID、研究员的 open_id 和知识空间的 space_id，按名字查六个条件视图在不在。全是读操作；可选的几项读不到只提醒，不中断。空间里一种插件类型都对不上时，脚本只提示从模板复制，不打印整份清单；这时 `--apply` 只记下空间和 open_id，不写绑定时间。
 
 预览会打印 `feishu/migration.md`，即建空间与核对清单。和用户一节一节过：
 
@@ -79,7 +79,7 @@ python3 -I "$PLUGIN/scripts/setup.py" feishu --target <项目目录> --live --ap
 - “知识库节点”让书记员用 `ledger.py ensure-node` 建，先预览再 `--apply`。它只认标题完全相同的节点：知识空间里已有、只是名字不同的，先请用户在网页上改名。
 - “读回”缺知识空间的，用户确认后运行 `lark-cli wiki +space-create --name "<知识空间名>" --description "<一句话>" --as user`，再重跑预览。“网页上还要做的事”照表补。
 
-问题都处理了，或者剩下的已经告诉用户，加 `--apply` 写入 `feishu/ids.json`（带绑定时间 `bound_at`）、两份字段字典和 `migration.md`。还有没绑上的类型或字段也可以先写入：用到它们的台账命令会停下报错，绑上以后就能用。以后空间有改动，或者任务文件换了空间，重跑一次 `feishu --live --apply`；任务文件写的空间和绑定的不一致时，台账脚本会停下。最后重跑一次 `init --apply`，让 CLAUDE.md 和书记员拿到新的 ID。
+问题都处理了，或者剩下的已经告诉用户，加 `--apply` 写入 `feishu/ids.json`（带绑定时间 `bound_at`）、两份字段字典和 `migration.md`。还有没绑上的类型或字段也可以先写入：用到它们的台账命令会停下报错，绑上以后就能用。以后空间有改动，重跑一次 `feishu --live --apply`。要改用另一个项目空间，照 `references/feishu-space.md` 的“换空间”一节做：新空间先用 `template --space` 核对，任务文件写新空间的 simple_name，预览里核对“换空间”一节；旧空间还有工作项的，插件搬不了，研究员确认它们留在旧空间以后才加 `--leave-old-items` 写入。任务文件写的空间和绑定的不一致时，台账脚本会停下。最后重跑一次 `init --apply`，让 CLAUDE.md 和书记员拿到新的 ID。
 
 两层空间的关系、六个条件视图和实测过的坑，见 `references/feishu-space.md`；网页上的操作步骤见 `references/build-space.md`。
 
@@ -98,6 +98,7 @@ python3 -I -B "$PLUGIN/tests/test_plugin.py"
 - `init --apply` 重跑一次报告“已写入 0 处”。
 - 模板核对报“可以当模板”，或者剩下的问题已经告诉用户怎么处理。
 - 绑定已经 `--apply` 写入；`feishu --live` 报告“绑定：没有问题”，或者剩下的问题已经告诉用户怎么处理。
+- 换过空间的：`feishu/ids.json` 的 project_key 和 simple_name 是新空间的，`previous_spaces` 记着旧空间。
 - `org/decisions.md` 开头列出了插件定下的几处安排，请研究员逐条确认或推翻。
 - 告诉用户怎么开始：在项目目录里运行 `claude`，主会话就是入口 pmo-p2；第一件事是用技能 `agent-org:charter` 立项。
 

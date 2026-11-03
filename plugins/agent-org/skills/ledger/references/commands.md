@@ -49,7 +49,7 @@ SELECT `work_item_id`, `name`, `work_item_status` FROM `<project_key>`.`<type_ke
 | --- | --- | --- |
 | 草稿没通过检查 | 包头缺项、栏目不对、用了旧包名 | 退回作者，附检查输出 |
 | 这个项目还没绑定飞书空间 | 还没跑过 `setup.py feishu --live --apply` | 交回请求方，请研究员按 `agent-org:setup` 的第四步绑定 |
-| spec/task.json 里的飞书项目空间是“…”，绑定的是“…” | 任务文件换了空间，还没重新绑定 | 同上：重跑 `setup.py feishu --live`，核对后加 `--apply` |
+| spec/task.json 里的飞书项目空间是“…”，绑定的是“…” | 任务文件换了空间，还没重新绑定 | 同上：请研究员照 setup 技能 `feishu-space.md` 的“换空间”一节重新绑定 |
 | …还没绑定到空间里的类型 / 字段…还没绑定 | 空间里没有它，或者名字不同、还没指认 | 看 `feishu/migration.md` 的“要处理的问题”：没有的请研究员先在模板空间里补、再在本空间照样补，名字不同的用 `--map` 指认；再跑 `setup.py feishu --live --apply` |
 | 没有选项“…” | 字段字典过期，或空间里的选项和规则不一致 | 重跑 `setup.py feishu --live --apply` 导出新的字段字典；还不行就看 `migration.md` 的“要处理的问题”里缺哪些选项 |
 | 不能从“A”流转到“B” | 规则文件里没有这一步 | 先流转到中间状态，或者交回请求方 |

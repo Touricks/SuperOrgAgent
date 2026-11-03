@@ -2660,5 +2660,157 @@ class TemplateSpaceTest(ProjectCase):
         self.assertIn("没写绑定时间", out)
 
 
+class SpaceSwitchTest(ProjectCase):
+    """A bound project moving to another space: found by key, with the old space's work items in view."""
+
+    OLD = {"name": "Thesis-Phase1", "simple_name": "old_sn", "project_key": "pk_fake"}
+    NEW = {"name": "Thesis-Phase1", "simple_name": "new_sn", "project_key": "pk_new"}
+
+    def setUp(self):
+        super().setUp()
+        self.ids_path = os.path.join(self.tmp, "feishu", "ids.json")
+        ids = self.saved()
+        ids["meegle"].update(simple_name="old_sn", space_name="Thesis-Phase1")
+        self.write_ids(ids)
+        self.set_task(meegle_space="Thesis-Phase1")
+
+    def saved(self):
+        with open(self.ids_path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def write_ids(self, ids):
+        with open(self.ids_path, "w", encoding="utf-8") as f:
+            json.dump(ids, f, ensure_ascii=False)
+
+    def set_task(self, **feishu):
+        path = os.path.join(self.tmp, "spec", "task.json")
+        with open(path, encoding="utf-8") as f:
+            task = json.load(f)
+        task["feishu"].update(feishu)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(task, f, ensure_ascii=False)
+
+    def fake_cli(self, projects, held_in="pk_fake"):
+        """Search answers with the projects named exactly; the old space holds one open 同序列需求."""
+        _, fd = fake_feishu(self.spec)
+        held = SPACE_KEYS["types"]["same_seq"]["type_key"]
+        calls = []
+
+        def fake_run(cmd, timeout=30):
+            calls.append(cmd)
+            s = " ".join(cmd)
+            if "project search" in s:
+                term = cmd[cmd.index("--project-key") + 1]
+                return 0, json.dumps({"projects": [p for p in projects if term in p.values()]}), ""
+            if "workitem query" in s:
+                row = [{"moql_field_list": [
+                    {"key": "work_item_id", "value": {"long_value": 2003}},
+                    {"key": "name", "value": {"string_value": "跑基线"}},
+                    {"key": "work_item_status", "value": {"key_label_value_list": [{"key": "s1", "label": "进行中"}]}}]}]
+                hit = cmd[cmd.index("--project-key") + 1] == held_in and "`%s`" % held in s
+                return 0, json.dumps({"data": {"0": row} if hit else {}}), ""
+            if "export_field_dictionary.py" in s:
+                with open(os.path.join(cmd[cmd.index("--out-dir") + 1], "field-dictionary.json"), "w", encoding="utf-8") as f:
+                    json.dump(fd, f, ensure_ascii=False)
+                return 0, "{}", ""
+            if "whoami" in s:
+                return 0, json.dumps({"identity": "user", "onBehalfOf": {"openId": "ou_x"}}), ""
+            if "+space-list" in s:
+                return 0, json.dumps({"data": {"items": []}}), ""
+            if "+node-get" in s:
+                return 0, json.dumps({"data": {"title": "x"}}), ""
+            if "view search" in s:
+                return 0, "[]", ""
+            return 1, "", "unexpected: %s" % s
+        return fake_run, calls
+
+    def with_cli(self, fake_run, fn, *args):
+        real = setup.run
+        setup.run = fake_run
+        try:
+            return self.run_quiet(fn, *args)
+        finally:
+            setup.run = real
+
+    def test_a_space_under_the_same_name_is_a_switch(self):
+        renamed = dict(self.OLD, name="Thesis-Phase1-旧")             # the old space renamed, the copy took the name
+        fake_run, _ = self.fake_cli([renamed, self.NEW])
+        code, out = self.with_cli(fake_run, setup.feishu, self.tmp, [], True, False)
+        self.assertEqual(code, 0)
+        self.assertIn("换空间：旧空间“Thesis-Phase1”（simple_name old_sn，project_key pk_fake）→ 新空间", out)
+        self.assertIn("同序列需求 #2003 跑基线（进行中）", out)
+        self.assertIn("--leave-old-items", out)
+        self.assertEqual(self.saved()["meegle"]["project_key"], "pk_fake")
+        with self.assertRaises(setup.SetupError) as ctx:
+            self.with_cli(fake_run, setup.feishu, self.tmp, [], True, True)
+        self.assertIn("还有工作项（同序列需求）", str(ctx.exception))
+        self.assertEqual(self.saved()["meegle"]["project_key"], "pk_fake")
+        self.assertFalse([n for n in os.listdir(os.path.join(self.tmp, "feishu")) if n.startswith(".export-")])
+        code, out = self.with_cli(fake_run, setup.main, ["feishu", "--target", self.tmp, "--live", "--apply", "--leave-old-items"])
+        self.assertEqual(code, 0, out)
+        m = self.saved()["meegle"]
+        self.assertEqual((m["project_key"], m["simple_name"]), ("pk_new", "new_sn"))
+        self.assertEqual(len(m["types"]), len(self.spec.work_items()))
+        self.assertIn("bound_at", m)
+        prev = m["previous_spaces"][0]
+        self.assertEqual((prev["project_key"], prev["simple_name"], prev["items_left"]), ("pk_fake", "old_sn", ["同序列需求"]))
+        self.assertEqual(prev["bound_at"], "2026-11-01T00:00:00-05:00")
+        self.assertIn("left_at", prev)
+
+    def test_two_spaces_with_one_name_stop_the_binding(self):
+        fake_run, calls = self.fake_cli([self.OLD, self.NEW])
+        with self.assertRaises(setup.SetupError) as ctx:
+            self.with_cli(fake_run, setup.feishu, self.tmp, [], True, False)
+        self.assertIn("old_sn", str(ctx.exception))
+        self.assertIn("new_sn", str(ctx.exception))
+        self.assertFalse([c for c in calls if "query" in c])
+        self.set_task(meegle_space="new_sn")
+        code, out = self.with_cli(fake_run, setup.feishu, self.tmp, [], True, False)
+        self.assertEqual(code, 0)
+        self.assertIn("→ 新空间“Thesis-Phase1”（simple_name new_sn，project_key pk_new）", out)
+
+    def test_a_renamed_space_keeps_its_binding(self):
+        fake_run, calls = self.fake_cli([dict(self.OLD, name="Thesis-Phase1-终版")])
+        code, out = self.with_cli(fake_run, setup.feishu, self.tmp, [], True, True)
+        self.assertEqual(code, 0)
+        self.assertIn("可能在飞书里改了名", out)
+        self.assertNotIn("换空间", out)
+        self.assertFalse([c for c in calls if "query" in c])
+        m = self.saved()["meegle"]
+        self.assertEqual(m["project_key"], "pk_fake")
+        self.assertNotIn("previous_spaces", m)
+
+    def test_an_empty_binding_left_behind_is_no_binding(self):
+        self.write_ids({"schema": "agent-org/ids-v1", "lark": {}, "wiki": {},
+                        "meegle": {"project_key": "pk_blank", "simple_name": "allin", "space_name": "Thesis-Phase1",
+                                   "bound_at": "2026-11-02T16:38:32-05:00", "types": {}, "field_keys": {}}})
+        old = os.environ.get("CLAUDE_PROJECT_DIR")
+        os.environ["CLAUDE_PROJECT_DIR"] = self.tmp
+        try:
+            code, out = self.run_quiet(ledger.main, ["update", "2003", "--set", "run_ids=r-1", "--apply"])
+        finally:
+            if old is None:
+                os.environ.pop("CLAUDE_PROJECT_DIR", None)
+            else:
+                os.environ["CLAUDE_PROJECT_DIR"] = old
+        self.assertEqual(code, 1)
+        self.assertIn("还没绑定飞书空间", out)
+        self.set_task(meegle_space="new_sn")
+        blank = {"name": "Thesis-Phase1", "simple_name": "allin", "project_key": "pk_blank"}
+        fake_run, calls = self.fake_cli([blank, self.NEW], held_in="pk_blank")
+        code, out = self.with_cli(fake_run, setup.feishu, self.tmp, [], True, True)
+        self.assertEqual(code, 0)
+        self.assertIn("空壳记录", out)
+        self.assertFalse([c for c in calls if "query" in c])           # nothing was bound there, nothing to ask
+        m = self.saved()["meegle"]
+        self.assertEqual(m["project_key"], "pk_new")
+        self.assertNotEqual(m["bound_at"], "2026-11-02T16:38:32-05:00")
+        self.assertEqual(m["previous_spaces"], [dict(m["previous_spaces"][0], project_key="pk_blank", simple_name="allin",
+                                                     space_name="Thesis-Phase1", items_left=[])])
+        self.assertNotIn("bound_at", m["previous_spaces"][0])
+        with open(os.path.join(self.tmp, "feishu", "migration.md"), encoding="utf-8") as f:
+            self.assertIn("旧绑定一种类型都没绑上", f.read())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
