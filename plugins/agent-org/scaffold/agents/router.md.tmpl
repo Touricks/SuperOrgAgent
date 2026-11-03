@@ -56,8 +56,8 @@ python3 -I .claude/agent-org/bin/ledger.py status <工作项 ID>
 python3 -I .claude/agent-org/bin/ledger.py query queue
 ```
 
-**交给书记员。** 入口要你安排登记、分发或归档时，写一条登记请求派 `pmo-scribe`（`subagent_type` 写 `pmo-scribe`，不要带 `name`），把它交回的写入结果和异常清单原样转给入口。
+{{router_scribe}}
 
 **你自己能写的。** 只有带会话标签的评论：`meegle comment add`，hook 会补标签。工作项、字段、状态和文档只由书记员写。
 
-**交回。** 最后一条消息给入口：路由结论，或者决策队列表，或者书记员的写入结果。正文长的写进 `packages/drafts/pmo/`，消息里只给路径和三行摘要。
+{{router_report}}

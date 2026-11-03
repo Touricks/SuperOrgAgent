@@ -1,6 +1,14 @@
 {
+  "_说明": "mode 选运行方式：cli（默认）是主会话当入口、其余角色是子智能体；pool 是桌面会话池，每个角色一个研究员看得见的会话。pool 一节只在 mode 是 pool 时生效：p1、p0 是每个序列开池时开几个 +1、+0 会话，later 里的序列开池时只开 +2，max_sessions 是会话总数的上限。",
   "name": "示例项目",
   "description": "面向代码的约束优化器",
+  "mode": "cli",
+  "pool": {
+    "p1": 1,
+    "p0": 1,
+    "later": [],
+    "max_sessions": 30
+  },
   "editable_paths": [
     "repo/**"
   ],

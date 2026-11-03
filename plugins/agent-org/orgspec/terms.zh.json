@@ -122,5 +122,15 @@
     "回执包": "交付包",
     "下发包": "下发关系的需求包",
     "执行包": "执行关系的需求包"
+  },
+  "msg": {
+    "assign": "派活",
+    "report": "交回",
+    "register_request": "登记请求",
+    "register_receipt": "登记回执",
+    "review": "送审",
+    "decide": "需拍板",
+    "resume": "继续",
+    "notice": "通知"
   }
 }

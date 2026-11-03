@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPO = os.path.dirname(os.path.dirname(ROOT))
@@ -115,6 +116,11 @@ class StubLedger(ledger.Ledger):
         raise AssertionError("没有录下的输出：%s" % argv[:5])
 
 
+def clean_env():
+    """The test process's environment without the IDs of the session that runs the tests."""
+    return {k: v for k, v in os.environ.items() if k not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_HOST_SESSION_ID")}
+
+
 class ProjectCase(unittest.TestCase):
     """A fresh initialised project in a temp dir, with fake Feishu IDs."""
 
@@ -133,8 +139,8 @@ class ProjectCase(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def hook(self, script, data):
-        env = dict(os.environ, CLAUDE_PROJECT_DIR=self.tmp)
+    def hook(self, script, data, env=None):
+        env = dict(clean_env(), CLAUDE_PROJECT_DIR=self.tmp, **(env or {}))
         p = subprocess.run([sys.executable, "-I", "-B", os.path.join(self.hooks, script)],
                            input=json.dumps(data), capture_output=True, text=True, env=env)
         out = json.loads(p.stdout) if p.stdout.strip() else {}
@@ -284,15 +290,19 @@ class SetupTest(ProjectCase):
 class HookTest(ProjectCase):
     def test_p0_needs_session_name(self):
         _, out = self.guard("alg-p1", "Agent", {"subagent_type": "alg-p0", "prompt": "去跑消融"})
-        self.assertEqual(out.get("permissionDecision"), "deny")
+        self.assertNotEqual(out.get("permissionDecision"), "deny")         # a norm: reminded, not blocked
+        self.assertIn("会话名：Alg-p0-", out.get("additionalContext", ""))
         _, out = self.guard("alg-p1", "Agent", {"subagent_type": "alg-p0", "prompt": "会话名：Alg-p0-2003\n去跑消融"})
         self.assertNotEqual(out.get("permissionDecision"), "deny")
+        self.assertNotIn("会话名：Alg-p0-", out.get("additionalContext", ""))
 
-    def test_cross_sequence_spawn_denied(self):
+    def test_cross_sequence_spawn_is_a_reminder(self):
         _, out = self.guard("alg-p1", "Agent", {"subagent_type": "quality-p2", "prompt": "核查"})
-        self.assertEqual(out.get("permissionDecision"), "deny")
+        self.assertNotEqual(out.get("permissionDecision"), "deny")
+        self.assertIn("照派发图只派", out.get("additionalContext", ""))
         _, out = self.guard("alg-p2", "Agent", {"subagent_type": "pmo-scribe", "prompt": "登记请求"})
         self.assertNotEqual(out.get("permissionDecision"), "deny")
+        self.assertNotIn("照派发图只派", out.get("additionalContext", ""))
 
     def test_only_scribe_writes_ledger(self):
         cmd = {"command": "python3 -I .claude/agent-org/bin/ledger.py register packages/drafts/alg/x.md --apply"}
@@ -325,9 +335,10 @@ class HookTest(ProjectCase):
         _, out = self.guard("alg-p1", "Write", {"file_path": own})
         self.assertEqual(out.get("permissionDecision"), "allow")
         _, out = self.guard("alg-p1", "Write", {"file_path": other})
-        self.assertEqual(out.get("permissionDecision"), "deny")
+        self.assertNotEqual(out.get("permissionDecision"), "deny")        # outside its range: reminded
+        self.assertIn("写入范围", out.get("additionalContext", ""))
         _, out = self.guard("alg-p1", "Write", {"file_path": os.path.join(self.tmp, "repo", "eval", "x.py")})
-        self.assertEqual(out.get("permissionDecision"), "deny")
+        self.assertEqual(out.get("permissionDecision"), "deny")           # the evaluation protocol stays hard
 
     def test_focus_session_blocks_dispatch(self):
         code, out = self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "focus1",
@@ -335,12 +346,19 @@ class HookTest(ProjectCase):
         self.assertEqual(code, 0)
         self.assertIn("聚焦会话", out.get("additionalContext", ""))
         _, out = self.guard("pmo-p2", "Agent", {"subagent_type": "alg-p2", "prompt": "继续"}, agent_id=None)
-        self.assertEqual(out.get("permissionDecision"), "deny")
-        self.assertIn("聚焦会话", out.get("permissionDecisionReason", ""))
+        self.assertNotEqual(out.get("permissionDecision"), "deny")        # a reminder now
+        self.assertIn("聚焦会话", out.get("additionalContext", ""))
         self.hook("instances.py", {"hook_event_name": "SessionEnd", "session_id": "focus1", "agent_type": "alg-p2",
                                    "cwd": self.tmp})
         _, out = self.guard("pmo-p2", "Agent", {"subagent_type": "alg-p2", "prompt": "继续"}, agent_id=None)
         self.assertNotEqual(out.get("permissionDecision"), "deny")
+        self.assertNotIn("聚焦会话", out.get("additionalContext", ""))
+        # The scribe's limit stays hard: a focus session running as the scribe blocks another scribe.
+        self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "focus2",
+                                   "agent_type": "pmo-scribe", "cwd": self.tmp, "source": "startup"})
+        _, out = self.guard("pmo-p2", "Agent", {"subagent_type": "pmo-scribe", "prompt": "登记请求"}, agent_id=None)
+        self.assertEqual(out.get("permissionDecision"), "deny")
+        self.assertIn("书记员同时只能有一个", out.get("permissionDecisionReason", ""))
 
     def test_inbox_shown_once(self):
         with contextlib.redirect_stdout(io.StringIO()):
@@ -1240,8 +1258,11 @@ class FourthRoundTest(ProjectCase):
     def test_append_from_a_file_redirect_is_explained(self):
         cmd = "lark-cli docs +update --doc https://x.feishu.cn/wiki/A --command append --doc-format markdown --content - --as user < rec.md"
         _, out = self.guard("pmo-scribe", "Bash", {"command": cmd})
-        self.assertEqual(out.get("permissionDecision"), "deny")
-        self.assertIn("看不到要追加的正文", out.get("permissionDecisionReason", ""))
+        self.assertNotEqual(out.get("permissionDecision"), "deny")
+        self.assertIn("看不到要追加的正文", out.get("additionalContext", ""))
+        with open(os.path.join(self.tmp, ".claude", "logs", "guard.jsonl"), encoding="utf-8") as f:
+            last = json.loads(f.read().splitlines()[-1])
+        self.assertTrue(any("看不到要追加的正文" in h for h in last["soft_hits"]))
 
     def charter(self, name="charter.md"):
         path = os.path.join(self.tmp, "packages", "drafts", "pmo", name)
@@ -1462,7 +1483,8 @@ class FifthRoundTest(ProjectCase):
         os.mkfifo(fifo)
         cmd = "lark-cli docs +update --doc https://x.feishu.cn/wiki/A --command append --content @pipe --as user"
         _, out = self.guard("pmo-scribe", "Bash", {"command": cmd})       # must not hang on the FIFO
-        self.assertEqual(out.get("permissionDecision"), "deny")
+        self.assertNotEqual(out.get("permissionDecision"), "deny")        # the tag check is a reminder now
+        self.assertIn("会话标签", out.get("additionalContext", ""))
         code, out = self.guard("alg-p2", "Bash", {"command": "python3 -I %s register \ud800 --apply" % self.L})
         self.assertIn(code, (0, 2))
         if code == 0:
@@ -1767,8 +1789,10 @@ class SixthRoundHookTest(ProjectCase):
 
     def test_scribe_tag_check_reads_the_heredoc_fed_to_lark(self):
         append = "lark-cli docs +update --doc https://x.feishu.cn/wiki/A --command append --doc-format markdown --content - --as user"
+        _, out = self.guard("pmo-scribe", "Bash", {"command": "cat > /tmp/prev.md <<'EOF'\n[PMO+0] 上一条记录\nEOF\n%s <<'EOF'\n没有会话标签的记录\nEOF" % append})
+        self.assertNotEqual(out.get("permissionDecision"), "deny")        # the tag is a norm: reminded
+        self.assertIn("第一行要带会话标签", out.get("additionalContext", ""))
         self.check([
-            ("pmo-scribe", "cat > /tmp/prev.md <<'EOF'\n[PMO+0] 上一条记录\nEOF\n%s <<'EOF'\n没有会话标签的记录\nEOF" % append, True),
             ("pmo-scribe", "cat > /tmp/prev.md <<'EOF'\n没有标签\nEOF\n%s <<'EOF'\n[PMO+0] 记录\nEOF" % append, False),
             ("pmo-scribe", "cat <<'EOF' | %s\n[PMO+0] 记录\nEOF" % append, False),
             ("pmo-scribe", "python3 -I %s register packages/drafts/alg/x.md --apply" % self.L, False),
@@ -2254,7 +2278,8 @@ class SpecAndRoutingTest(ProjectCase):
 
     def test_task_file_holds_only_what_scripts_use(self):
         task = setup.load_task(TASK)
-        self.assertEqual(tuple(task), setup.TASK_KEYS)
+        self.assertEqual(tuple(task), tuple(k for k in setup.TASK_KEYS if k != "pool"))   # pool only in pool mode
+        self.assertEqual(task["mode"], "cli")
         self.assertEqual(json.loads(self.read("spec/task.json")), task)
         claude = self.read("CLAUDE.md")
         for part in ("`spec/spec.md`", "`spec/eval-protocol.md`", "可写路径：`repo/**`", "只读路径：`repo/eval/**`、`data/eval/**`"):
@@ -2375,8 +2400,8 @@ class SpecAndRoutingTest(ProjectCase):
         self.assertEqual(out.get("permissionDecision"), "deny")
         self.assertIn("评测协议", out.get("permissionDecisionReason", ""))
         _, out = self.guard("alg-p0", "Write", {"file_path": "repo/model.py", "content": "x"})
-        self.assertEqual(out.get("permissionDecision"), "deny")
-        self.assertIn("可改范围", out.get("permissionDecisionReason", ""))
+        self.assertNotEqual(out.get("permissionDecision"), "deny")
+        self.assertIn("可改范围", out.get("additionalContext", ""))
         _, out = self.guard("rnd-p0", "Write", {"file_path": "repo/model.py", "content": "x"}, agent_id="a2")
         self.assertNotEqual(out.get("permissionDecision"), "deny")
 
@@ -2431,7 +2456,7 @@ class SpecAndRoutingTest(ProjectCase):
         keys = [space["project_key"], space["simple_name"]] + [t["type_key"] for t in space["types"].values()]
         keys += [x["field_key"] for fields in space["fields"].values() for x in fields.values()]
         words = ["Coze" + "Loop", "coze" + "loop", "eval_" + "resources", "Auto" + "Research", "MC" + "GS", "贝索" + "斯",
-                 "Claude in " + "Chrome", "前" + "文"]
+                 "Claude in " + "Chrome", "前" + "文", "mcp__" + "ccd", "ccd_" + "session"]
         pattern = re.compile("|".join(re.escape(w) for w in words + sorted(set(keys))))
         hits = []
         for base, dirs, files in os.walk(REPO):
@@ -2871,6 +2896,1604 @@ class FeishuDocsTest(ProjectCase):
         self.assertIn("`ledger.py ensure-node all`", md)
         self.assertIn("review/alg", md)
         self.assertNotIn("review/infra", md)
+
+
+# ---------------------------------------------------------- pool mode
+OLD_SPAWN = {   # 0.4.0's spawn_list, kept here to check the dispatch graph in rules.json gives the same lists
+    ("pmo", 2): lambda seqs: ["%s-p2" % s for s in seqs if s != "pmo"] + ["pmo-router", "pmo-scribe", "Explore", "Plan"],
+    ("pmo", 1): lambda seqs: ["pmo-scribe"],
+    ("pmo", 0): lambda seqs: [],
+}
+
+
+def old_spawn(seq, rank, seqs):
+    if (seq, rank) in OLD_SPAWN:
+        return OLD_SPAWN[(seq, rank)](seqs)
+    if rank == 0:
+        return []
+    return ["%s-p%d" % (seq, rank - 1), "pmo-scribe"]
+
+
+class PoolProjectCase(unittest.TestCase):
+    """A fresh project initialised with "mode": "pool", with fake Feishu IDs."""
+
+    POOL = {"p1": 1, "p0": 1, "later": [], "max_sessions": 30}
+    L = ".claude/agent-org/bin/ledger.py"
+    R = ".claude/agent-org/bin/route.py"
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="agent-org-pool-")
+        self.spec = orgspec.OrgSpec()
+        with open(TASK, encoding="utf-8") as f:
+            task = json.load(f)
+        task.update(mode="pool", pool=dict(self.POOL))
+        self.task_path = os.path.join(self.tmp, "agent-org.task.json")
+        with open(self.task_path, "w", encoding="utf-8") as f:
+            json.dump(task, f, ensure_ascii=False)
+        with contextlib.redirect_stdout(io.StringIO()):
+            plan = setup.build_plan(self.tmp, self.task_path, None)
+            setup.apply_plan(self.tmp, plan, setup.actions_for(self.tmp, plan))
+        ids, fd = fake_feishu(self.spec)
+        for name, obj in (("ids.json", ids), ("field-dictionary.json", fd)):
+            with open(os.path.join(self.tmp, "feishu", name), "w", encoding="utf-8") as f:
+                json.dump(obj, f, ensure_ascii=False)
+        self.hooks = os.path.join(self.tmp, ".claude", "hooks")
+        self.n = 0
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def read(self, rel):
+        with open(os.path.join(self.tmp, rel), encoding="utf-8") as f:
+            return f.read()
+
+    def env(self, sid=None, desk=None):
+        env = dict(clean_env(), CLAUDE_PROJECT_DIR=self.tmp)
+        if sid:
+            env["CLAUDE_CODE_SESSION_ID"] = sid
+        if desk:
+            env["CLAUDE_CODE_HOST_SESSION_ID"] = desk
+        return env
+
+    def hook(self, script, data, desk=None):
+        data = dict({"cwd": self.tmp}, **data)
+        p = subprocess.run([sys.executable, "-I", "-B", os.path.join(self.hooks, script)], input=json.dumps(data),
+                           capture_output=True, text=True, env=self.env(desk=desk))
+        out = json.loads(p.stdout) if p.stdout.strip() else {}
+        return p.returncode, out.get("hookSpecificOutput", {})
+
+    def route(self, *argv, sid=None, desk=None):
+        p = subprocess.run([sys.executable, "-I", "-B", os.path.join(self.tmp, self.R)] + list(argv), capture_output=True,
+                           text=True, env=self.env(sid, desk), cwd=self.tmp)
+        return p.returncode, p.stdout + p.stderr
+
+    def guard(self, sid, tool, tool_input, desk=None, **extra):
+        data = dict({"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": tool_input, "session_id": sid}, **extra)
+        return self.hook("guard.py", data, desk=desk)
+
+    def bash(self, sid, command, desk=None, **extra):
+        return self.guard(sid, "Bash", {"command": command}, desk=desk, **extra)
+
+    def prompt(self, sid, text, desk=None, **extra):
+        return self.hook("inbox.py", dict({"hook_event_name": "UserPromptSubmit", "session_id": sid, "prompt": text}, **extra),
+                         desk=desk)
+
+    def opening(self, role, name, sid, desk=None):
+        return self.prompt(sid, "认领 %s（会话名 %s），然后照认领输出开出本序列的 +1 和 +0。" % (role, name), desk=desk)
+
+    def claim(self, role, name, sid, desk=None, hook_desk=None):
+        """A child session's claim: guard, route.py claim (its Bash sees the desktop ID), then audit."""
+        cmd = "python3 -I %s claim %s --as %s" % (self.R, role, name)
+        self.bash(sid, cmd, desk=hook_desk)
+        code, out = self.route("claim", role, "--as", name, "--wait", "0", sid=sid, desk=desk)
+        self.hook("audit.py", {"hook_event_name": "PostToolUse", "tool_name": "Bash", "session_id": sid,
+                               "tool_input": {"command": cmd}, "tool_response": {"stdout": out, "stderr": ""}}, desk=hook_desk)
+        return code, out
+
+    def pool(self):
+        return json.loads(self.read(".claude/state/pool.json"))
+
+    def session(self, sid):
+        path = os.path.join(self.tmp, ".claude", "state", "sessions", sid + ".json")
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def write_pool(self, data):
+        path = os.path.join(self.tmp, ".claude", "state", "pool.json")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+
+    def started_pool(self):
+        """Entry, scribe and the algorithm sequence claimed; sessions named after their roles."""
+        self.opening("pmo-p2", "PMO-p2-01", "s-entry")
+        self.route("expect", "PMO-p0-01", "--role", "pmo-scribe", "--desk", "d-scribe", sid="s-entry")
+        self.claim("pmo-scribe", "PMO-p0-01", "s-scribe", desk="d-scribe")
+        self.opening("alg-p2", "Alg-p2-01", "s-alg2")
+        for name, role, sid in (("Alg-p1-01", "alg-p1", "s-alg1"), ("Alg-p0-01", "alg-p0", "s-alg0")):
+            self.route("expect", name, "--role", role, "--desk", "d-" + sid, sid="s-alg2")
+            self.claim(role, name, sid, desk="d-" + sid)
+        self.opening("quality-p2", "Quality-p2-01", "s-q2")
+        self.route("expect", "Quality-p1-01", "--role", "quality-p1", "--desk", "d-q1", sid="s-q2")
+        self.claim("quality-p1", "Quality-p1-01", "s-q1", desk="d-q1")
+        return self.pool()
+
+
+class PoolSetupTest(PoolProjectCase):
+    def test_settings_and_policy(self):
+        settings = json.loads(self.read(".claude/settings.json"))
+        self.assertNotIn("agent", settings)
+        self.assertIs(settings["autoMemoryEnabled"], False)
+        self.assertEqual(settings["autoCompactWindow"], 200000)
+        for event in ("Stop", "StopFailure", "Notification", "PermissionRequest", "PermissionDenied", "PostCompact"):
+            self.assertIn(event, settings["hooks"])
+        self.assertIn("AskUserQuestion", settings["hooks"]["PreToolUse"][0]["matcher"])
+        self.assertEqual(settings["hooks"]["PostToolUse"][0]["matcher"], "Bash|Monitor|Agent|Task")
+        self.assertIn("Monitor", settings["hooks"]["PreToolUse"][0]["matcher"])
+        allow = settings["permissions"]["allow"]
+        self.assertIn("Bash(python3 -I .claude/agent-org/bin/route.py claim *)", allow)
+        self.assertIn("Bash(python3 -I .claude/agent-org/bin/ledger.py register *)", allow)
+        self.assertNotIn("Bash(python3 -I .claude/agent-org/bin/route.py release *)", allow)
+        self.assertIn("Edit(/.claude/state/**)", settings["permissions"]["ask"])
+        policy = json.loads(self.read(".claude/hooks/policy.json"))
+        self.assertEqual((policy["mode"], policy["version"]), ("pool", 4))
+        self.assertEqual(policy["pool"], self.POOL)
+        for key in ("lark_ask", "meegle_ask", "docs_create_parents"):
+            self.assertNotIn(key, policy["agents"]["alg-p1"])
+        self.assertEqual(policy["owned_paths"][".claude/state/**"], [])
+        self.assertIn("spec/spec.md", policy["soft_owned"])
+        for rel in (".claude/hooks/pool.py", ".claude/agent-org/bin/pool.py"):
+            self.assertTrue(os.path.isfile(os.path.join(self.tmp, rel)))
+
+    def test_texts_are_written_for_the_pool(self):
+        claude = self.read("CLAUDE.md")
+        for part in ("按会话池运行", "route.py claim", "## 本目录怎样落实全局约定", "## Compact Instructions", "不回 ACK"):
+            self.assertIn(part, claude)
+        self.assertNotIn("主会话以 `pmo-p2`", claude)
+        entry = self.read(".claude/agents/pmo-p2.md")
+        self.assertIn("在会话池里是研究员平时对话的会话", entry)
+        self.assertNotIn("替换了 Claude Code 的默认系统提示", entry)
+        self.assertNotIn("{{", entry)
+        for name in os.listdir(os.path.join(self.tmp, ".claude", "agents")):
+            text = self.read(os.path.join(".claude", "agents", name))
+            self.assertIn(setup.POOL_DESC, text.split("\n", 3)[2], name)
+            self.assertNotIn("用 Agent 工具派 `", text, name)
+        self.assertIn("【登记请求】", self.read(".claude/agents/alg-p1.md"))
+        self.assertIn("【登记回执", self.read(".claude/agents/pmo-scribe.md"))
+        self.assertIn("### 派发图", self.read("org/org.md"))
+        self.assertIn("初始池", self.read("org/grants.md"))
+
+    def test_pool_plan(self):
+        plan = json.loads(self.read(".claude/agent-org/pool-plan.json"))
+        self.assertEqual(len(plan["top"]), 7)
+        self.assertEqual(sum(len(t["children"]) for t in plan["top"]), 14)
+        self.assertEqual(plan["total"], 21)
+        names = [t["name"] for t in plan["top"]] + [c["name"] for t in plan["top"] for c in t["children"]]
+        self.assertEqual(len(set(names)), 21)
+        for t in plan["top"]:
+            self.assertTrue(re.fullmatch(r"[a-z0-9-]{1,24}", t["short"]))
+            self.assertTrue(t["opening"].startswith("认领 %s（会话名 %s）" % (t["role"], t["name"])))
+            for c in t["children"]:
+                self.assertTrue(re.fullmatch(r"[a-z0-9-]{1,24}", c["short"]))
+                self.assertIn("route.py claim %s --as %s" % (c["role"], c["name"]), c["brief"])
+                self.assertGreater(len(c["background"]), 80)
+        pmo = plan["top"][[t["role"] for t in plan["top"]].index("pmo-p2")]
+        self.assertEqual([c["name"] for c in pmo["children"]], ["PMO-p1-01", "PMO-p0-01"])
+        self.assertIn("开出路由和书记员", pmo["opening"])
+
+    def test_later_sequences_start_with_their_p2(self):
+        with open(self.task_path, encoding="utf-8") as f:
+            task = json.load(f)
+        task["pool"].update(later=["liaison"], p0=2)
+        with open(self.task_path, "w", encoding="utf-8") as f:
+            json.dump(task, f, ensure_ascii=False)
+        plan = setup.build_plan(self.tmp, self.task_path, None)
+        doc = json.loads(plan.files[".claude/agent-org/pool-plan.json"][0])
+        liaison = next(t for t in doc["top"] if t["role"] == "liaison-p2")
+        self.assertEqual(liaison["children"], [])
+        alg = next(t for t in doc["top"] if t["role"] == "alg-p2")
+        self.assertEqual([c["name"] for c in alg["children"]], ["Alg-p1-01", "Alg-p0-01", "Alg-p0-02"])
+
+    def test_injection_fits_every_role(self):
+        sys.path.insert(0, self.hooks)
+        import pool
+        policy = json.loads(self.read(".claude/hooks/policy.json"))
+        for role, pol in policy["agents"].items():
+            claim = {"name": pol.get("fixed_session") or "%s-p%d-01" % (pol["abbrev"], pol["rank"]), "role": role}
+            text = pool.injection(self.tmp, policy, claim, "规则已更新。")
+            self.assertLessEqual(len(text), 9500, role)
+            self.assertIn("未了事项", text)
+
+    def test_init_twice_and_check(self):
+        for _ in range(2):                                 # the first run takes in the fake IDs written in setUp
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                plan = setup.build_plan(self.tmp, self.task_path, None)
+                setup.apply_plan(self.tmp, plan, setup.actions_for(self.tmp, plan))
+        self.assertIn("已写入 0 处", out.getvalue())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            setup.check(self.tmp)
+        self.assertNotIn("现在的插件", out.getvalue())
+        self.assertIn("会话池还没开齐", out.getvalue())
+
+    def test_pool_settings_are_checked(self):
+        with open(self.task_path, encoding="utf-8") as f:
+            base = json.load(f)
+        for bad in ({"p1": 4}, {"p0": -1}, {"later": "liaison"}, {"later": ["pmo"]}, {"max_sessions": 6},
+                    {"max_sessions": 58}, {"size": 3}):
+            task = dict(base, pool=dict(self.POOL, **bad))
+            path = os.path.join(self.tmp, "bad.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(task, f, ensure_ascii=False)
+            with self.assertRaises(setup.SetupError, msg=str(bad)):
+                setup.load_task(path)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(dict(base, mode="desktop"), f, ensure_ascii=False)
+        with self.assertRaises(setup.SetupError):
+            setup.load_task(path)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(dict(base, pool=dict(self.POOL, later=["liaison"])), f, ensure_ascii=False)
+        with self.assertRaises(setup.SetupError):
+            setup.build_plan(self.tmp, path, "pmo,quality,alg")
+
+    def test_dispatch_targets_match_the_old_spawn_lists(self):
+        seqs = [s for s, _, _ in self.spec.sequences()]
+        for seq in seqs:
+            for rank in (2, 1, 0):
+                role = setup.agent_name(seq, rank)
+                self.assertEqual(self.spec.dispatch_targets(role, seq, rank, seqs, "cli"), old_spawn(seq, rank, seqs), role)
+        some = ["pmo", "quality", "alg"]
+        self.assertEqual(self.spec.dispatch_targets("pmo-p2", "pmo", 2, some, "cli"), old_spawn("pmo", 2, some))
+        self.assertEqual(self.spec.dispatch_targets("alg-p2", "alg", 2, seqs, "pool"), ["alg-p1"])
+
+    def test_pool_checklist(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(setup.main(["pool", "--target", self.tmp]), 0)
+        text = out.getvalue()
+        self.assertIn("认领 pmo-p2（会话名 PMO-p2-01）", text)
+        self.assertIn("当前：0/21 条认领", text)
+
+
+class PoolClaimTest(PoolProjectCase):
+    def test_claim_needs_a_permit(self):
+        cmd = "python3 -I %s claim alg-p1 --as Alg-p1-01" % self.R
+        _, out = self.bash("s-nobody", cmd)
+        self.assertNotIn("permissionDecision", out)      # route.py checks the permit against the session's own IDs
+        code, text = self.route("claim", "alg-p1", "--as", "Alg-p1-01", "--wait", "0", sid="s-nobody")
+        self.assertEqual(code, 1)
+        self.assertIn("没有找到", text)
+        self.assertFalse(os.path.isfile(os.path.join(self.tmp, ".claude", "state", "pool.json")) and self.pool()["claims"])
+
+    def test_opening_line_claims_a_p2_only(self):
+        _, out = self.opening("alg-p2", "Alg-p2-01", "s1")
+        self.assertIn("本会话是 Alg-p2-01", out.get("additionalContext", ""))
+        self.assertIn("算法 +2", out.get("additionalContext", ""))
+        self.assertEqual(self.pool()["claims"]["Alg-p2-01"]["session_id"], "s1")
+        self.prompt("s2", "你好")
+        self.opening("product-p2", "Product-p2-01", "s2")                  # not the first prompt
+        self.prompt("s3", "认领 alg-p1（会话名 Alg-p1-01）。先运行 route.py claim")   # not a +2
+        self.assertEqual(sorted(self.pool()["claims"]), ["Alg-p2-01"])
+        _, out = self.opening("alg-p2", "Alg-p2-01", "s4")                 # a second alg-p2
+        self.assertIn("上限", out.get("additionalContext", ""))
+        self.assertEqual(sorted(self.pool()["claims"]), ["Alg-p2-01"])
+
+    def test_who_may_pre_register(self):
+        self.opening("alg-p2", "Alg-p2-01", "s1")
+        self.opening("pmo-p2", "PMO-p2-01", "s-entry")
+        self.assertEqual(self.route("expect", "Alg-p1-01", "--role", "alg-p1", "--desk", "d1", sid="s1")[0], 0)
+        self.assertEqual(self.route("expect", "Quality-p1-01", "--role", "quality-p1", "--desk", "d2", sid="s1")[0], 1)
+        self.assertEqual(self.route("expect", "PMO-p0-01", "--role", "pmo-scribe", "--desk", "d3", sid="s1")[0], 1)
+        cmd = "python3 -I %s expect Quality-p1-01 --role quality-p1 --desk d2" % self.R
+        self.assertEqual(self.bash("s1", cmd)[1].get("permissionDecision"), "deny")
+        self.assertEqual(self.route("expect", "PMO-p0-01", "--role", "pmo-scribe", "--desk", "d3", sid="s-entry")[0], 0)
+        self.assertEqual(self.route("expect", "Rnd-p0-01", "--role", "rnd-p0", "--desk", "d4", sid="s-researcher")[0], 0)
+        self.assertEqual(self.route("expect", "Rnd-p1-01", "--role", "alg-p1", "--desk", "d5", sid="s-researcher")[0], 1)
+        self.assertEqual(sorted(p["name"] for p in self.pool()["permits"]), ["Alg-p1-01", "PMO-p0-01", "RnD-p0-01"])   # canonical case
+
+    def test_desktop_id_in_the_hook_promotes_at_once(self):
+        self.opening("alg-p2", "Alg-p2-01", "s1")
+        self.route("expect", "Alg-p1-01", "--role", "alg-p1", "--desk", "d1", sid="s1")
+        _, out = self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s5", "source": "startup"}, desk="d1")
+        self.assertIn("本会话是 Alg-p1-01", out.get("additionalContext", ""))
+        self.assertEqual(self.pool()["claims"]["Alg-p1-01"]["session_id"], "s5")
+        _, out = self.bash("s5", "python3 -I %s claim alg-p1 --as Alg-p1-01 --desk d9" % self.R, desk="d1")
+        self.assertEqual(out.get("permissionDecision"), "deny")
+        code, text = self.route("claim", "alg-p1", "--as", "Alg-p1-01", "--wait", "0", sid="s5", desk="d1")
+        self.assertEqual(code, 0)
+        self.assertIn("已认领", text)
+
+    def test_two_step_claim_without_a_desktop_id_in_the_hook(self):
+        self.opening("alg-p2", "Alg-p2-01", "s1")
+        self.route("expect", "Alg-p1-01", "--role", "alg-p1", "--desk", "d1", sid="s1")
+        cmd = "python3 -I %s claim alg-p1 --as Alg-p1-01" % self.R
+        _, out = self.bash("s6", cmd)
+        self.assertNotEqual(out.get("permissionDecision"), "deny")        # a permit waits for this role
+        code, text = self.route("claim", "alg-p1", "--as", "Alg-p1-01", "--wait", "0", sid="s6", desk="d1")
+        self.assertEqual(code, 0)
+        self.assertIn("待转正", text)
+        self.assertNotIn("Alg-p1-01", self.pool()["claims"])
+        self.hook("audit.py", {"hook_event_name": "PostToolUse", "tool_name": "Bash", "session_id": "s6", "agent_id": "x",
+                               "tool_input": {"command": cmd}, "tool_response": {"stdout": text}})
+        self.assertNotIn("Alg-p1-01", self.pool()["claims"])               # a subagent cannot finish it
+        self.hook("audit.py", {"hook_event_name": "PostToolUse", "tool_name": "Bash", "session_id": "s6",
+                               "tool_input": {"command": cmd}, "tool_response": {"stdout": text}})
+        claim = self.pool()["claims"]["Alg-p1-01"]
+        self.assertEqual((claim["session_id"], claim["desk"]), ("s6", "d1"))
+        self.assertEqual(self.pool()["permits"], [])
+
+    def test_one_entry_and_one_scribe(self):
+        self.started_pool()
+        code, text = self.route("expect", "PMO-p0-01", "--role", "pmo-scribe", "--desk", "d-x", sid="s-researcher")
+        self.assertEqual(code, 1)
+        _, out = self.opening("pmo-p2", "PMO-p2-01", "s-second")
+        self.assertIn("上限", out.get("additionalContext", ""))
+        pl = self.pool()
+        self.assertEqual([c["name"] for c in pl["claims"].values() if c["role"] == "pmo-scribe"], ["PMO-p0-01"])
+
+    def test_release_leaves_a_tombstone(self):
+        self.started_pool()
+        _, out = self.bash("s-alg1", "python3 -I %s release Alg-p0-01" % self.R)
+        self.assertEqual(out.get("permissionDecision"), "deny")           # a claimed session cannot release
+        self.assertEqual(self.route("release", "Alg-p0-01", sid="s-alg1")[0], 1)
+        _, out = self.bash("s-researcher", "python3 -I %s release Alg-p0-01" % self.R)
+        self.assertEqual(out.get("permissionDecision"), "ask")
+        self.assertEqual(self.route("release", "Alg-p0-01", sid="s-researcher")[0], 0)
+        pl = self.pool()
+        self.assertNotIn("Alg-p0-01", pl["claims"])
+        self.assertEqual(pl["tombstones"][-1]["name"], "Alg-p0-01")
+        _, out = self.bash("s-alg0", "python3 -I %s register packages/drafts/alg/x.md --apply" % self.L)
+        self.assertEqual(out.get("permissionDecision"), "deny")
+        _, out = self.bash("s-alg0", "python3 -I %s claim alg-p0 --as Alg-p0-01" % self.R)
+        self.assertEqual(out.get("permissionDecision"), "deny")
+        self.route("expect", "Alg-p0-01", "--role", "alg-p0", "--desk", "d-s-alg0", sid="s-alg2")
+        self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-alg0", "source": "resume"}, desk="d-s-alg0")
+        self.assertEqual(self.pool()["claims"]["Alg-p0-01"]["session_id"], "s-alg0")
+        self.assertEqual(self.pool()["tombstones"], [])
+
+    def test_clear_reattaches_the_claim(self):
+        self.started_pool()
+        self.hook("instances.py", {"hook_event_name": "SessionEnd", "session_id": "s-alg1", "reason": "clear"})
+        self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-alg1b", "source": "clear"}, desk="d-s-alg1")
+        self.assertEqual(self.pool()["claims"]["Alg-p1-01"]["session_id"], "s-alg1b")
+        # without a desktop ID: one SessionEnd(clear) in the last minute pairs with the next SessionStart(clear)
+        self.hook("instances.py", {"hook_event_name": "SessionEnd", "session_id": "s-entry", "reason": "clear"})
+        _, out = self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-entry2", "source": "clear"})
+        self.assertEqual(self.pool()["claims"]["PMO-p2-01"]["session_id"], "s-entry2")
+        self.assertIn("上下文清空后接回认领", out.get("additionalContext", ""))
+        # two at once: neither is guessed
+        for sid in ("s-q2", "s-q1"):
+            self.hook("instances.py", {"hook_event_name": "SessionEnd", "session_id": sid, "reason": "clear"})
+        self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-new", "source": "clear"})
+        pl = self.pool()
+        self.assertEqual((pl["claims"]["Quality-p2-01"]["session_id"], pl["claims"]["Quality-p1-01"]["session_id"]),
+                         ("s-q2", "s-q1"))
+
+    def test_cli_mode_needs_no_claim(self):
+        tmp = tempfile.mkdtemp(prefix="agent-org-cli-")
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                plan = setup.build_plan(tmp, TASK, None)
+                setup.apply_plan(tmp, plan, setup.actions_for(tmp, plan))
+            p = subprocess.run([sys.executable, "-I", "-B", os.path.join(tmp, self.R), "claim", "alg-p1"],
+                               capture_output=True, text=True, env=dict(clean_env(), CLAUDE_PROJECT_DIR=tmp))
+            self.assertEqual(p.returncode, 0)
+            self.assertIn("CLI 模式", p.stdout)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+class PoolGuardTest(PoolProjectCase):
+    W = "python3 -I .claude/agent-org/bin/ledger.py register packages/drafts/alg/x.md --apply"
+
+    def setUp(self):
+        super().setUp()
+        self.started_pool()
+
+    def decision(self, sid, command, **extra):
+        return self.bash(sid, command, **extra)[1].get("permissionDecision")
+
+    def test_only_the_claimed_scribe_writes_the_ledger(self):
+        self.assertEqual(self.decision("s-researcher", self.W), "ask")
+        self.assertEqual(self.decision("s-researcher", self.W, permission_mode="bypassPermissions"), "deny")
+        self.assertEqual(self.decision("s-alg2", self.W), "deny")
+        self.assertEqual(self.decision("s-scribe", self.W), "allow")
+        self.assertNotEqual(self.decision("s-alg2", "python3 -I .claude/agent-org/bin/ledger.py query open"), "deny")
+        _, out = self.bash("s-alg2", "meegle comment add --work-item-id 1 --content hi")
+        self.assertEqual(out.get("permissionDecision"), "allow")
+        self.assertIn("[Alg+2]", out.get("updatedInput", {}).get("command", ""))
+
+    def test_two_scribe_claims_stop_all_writes(self):
+        pl = self.pool()
+        pl["claims"]["PMO-p0-02"] = dict(pl["claims"]["PMO-p0-01"], name="PMO-p0-02", session_id="s-x")
+        self.write_pool(pl)
+        self.assertEqual(self.decision("s-scribe", self.W), "deny")
+
+    def test_no_write_power_outside_the_claim(self):
+        self.assertEqual(self.decision("s-alg2", self.W, agent_id="a1", agent_type="pmo-scribe"), "deny")   # subagent
+        self.assertEqual(self.decision("s-term", self.W, agent_type="pmo-scribe"), "deny")                  # claude --agent
+        self.assertEqual(self.decision("s-scribe", self.W, agent_id="a2", agent_type="Explore"), "deny")    # helper in the scribe
+        self.route("expect", "Rnd-p0-01", "--role", "rnd-p0", "--desk", "d-r0", sid="s-researcher")
+        self.assertEqual(self.decision("s-r0", self.W), "ask")            # a session the claims do not know
+        self.assertEqual(self.bash("s-r0b", self.W, desk="d-r0")[1].get("permissionDecision"), "deny")     # promoted, not the scribe
+
+    def test_agent_tool_in_the_pool(self):
+        _, out = self.guard("s-alg2", "Agent", {"subagent_type": "pmo-scribe", "prompt": "登记请求"})
+        self.assertEqual(out.get("permissionDecision"), "deny")
+        _, out = self.guard("s-alg1", "Agent", {"subagent_type": "alg-p0", "prompt": "会话名：Alg-p0-2101"})
+        self.assertNotEqual(out.get("permissionDecision"), "deny")
+        self.assertIn("发消息", out.get("additionalContext", ""))
+        _, out = self.guard("s-alg1", "Agent", {"subagent_type": "Explore", "prompt": "找找", "name": "x"})
+        self.assertEqual(out.get("permissionDecision"), "deny")
+        _, out = self.guard("s-alg1", "Agent", {"subagent_type": "Explore", "prompt": "找找"})
+        self.assertNotIn("permissionDecision", out)
+
+    def test_claim_commands_must_be_plain(self):
+        R = self.R
+        for cmd in ("FOO=1 python3 -I %s claim alg-p1 --as Alg-p1-01" % R,
+                    "python3 -I %s claim alg-p1 --as Alg-p1-01 | cat" % R,
+                    "env python3 -I %s expect Alg-p0-02 --role alg-p0 --desk d" % R,
+                    "python3 %s claim alg-p1" % R):
+            self.assertEqual(self.decision("s-alg1", cmd), "deny", cmd)
+        self.assertEqual(self.decision("s-alg1", "python3 -I %s claim alg-p1 --as Alg-p1-01" % R, agent_id="a", agent_type="Explore"), "deny")
+
+    def test_state_and_config_are_not_edited(self):
+        for rel in (".claude/state/pool.json", ".claude/hooks/guard.py", ".claude/settings.json", ".claude/agents/alg-p1.md"):
+            _, out = self.guard("s-alg2", "Edit", {"file_path": os.path.join(self.tmp, rel)})
+            self.assertEqual(out.get("permissionDecision"), "deny", rel)
+        _, out = self.guard("s-alg2", "Edit", {"file_path": os.path.join(self.tmp, ".claude", "agent-memory", "alg-p2", "m.md")})
+        self.assertNotEqual(out.get("permissionDecision"), "deny")
+
+    def test_no_branch_switching_in_the_shared_directory(self):
+        for cmd in ("git checkout -b x", "git stash", "cd repo && git -C . reset --hard", "git switch main"):
+            self.assertEqual(self.decision("s-alg1", cmd), "deny", cmd)
+        self.assertEqual(self.decision("s-researcher", "git stash"), "ask")
+        self.assertIsNone(self.decision("s-alg1", "git status && git log -1"))
+
+    def test_soft_rules_remind_and_log(self):
+        _, out = self.guard("s-alg1", "Write", {"file_path": os.path.join(self.tmp, "packages", "drafts", "quality", "x.md")})
+        self.assertNotEqual(out.get("permissionDecision"), "deny")
+        self.assertIn("写入范围", out.get("additionalContext", ""))
+        with open(os.path.join(self.tmp, ".claude", "logs", "guard.jsonl"), encoding="utf-8") as f:
+            last = json.loads(f.read().splitlines()[-1])
+        self.assertEqual((last["session_name"], last["origin"]), ("Alg-p1-01", "claim"))
+        self.assertTrue(last["soft_hits"])
+        _, out = self.guard("s-alg0", "Write", {"file_path": os.path.join(self.tmp, "packages", "drafts", "quality", "x.md")})
+        self.assertIn("Alg-p1-01", out.get("additionalContext", ""))     # two sessions on one file within 30 minutes
+
+    def test_evaluation_protocol_stays_read_only(self):
+        path = os.path.join(self.tmp, "repo", "eval", "score.py")
+        self.assertEqual(self.guard("s-alg1", "Edit", {"file_path": path})[1].get("permissionDecision"), "deny")
+        self.assertEqual(self.guard("s-q1", "Edit", {"file_path": path})[1].get("permissionDecision"), "ask")
+        self.assertEqual(self.guard("s-q1", "Edit", {"file_path": path}, permission_mode="bypassPermissions")[1].get("permissionDecision"), "deny")
+
+    def test_a_broken_claims_file_denies_only_the_hard_rules(self):
+        with open(os.path.join(self.tmp, ".claude", "state", "pool.json"), "w", encoding="utf-8") as f:
+            f.write("{broken")
+        code, out = self.bash("s-scribe", self.W)
+        self.assertEqual((code, out.get("permissionDecision")), (0, "deny"))
+        code, out = self.guard("s-alg1", "Edit", {"file_path": os.path.join(self.tmp, "runs", "alg", "n.md")})
+        self.assertEqual(code, 0)
+        self.assertNotEqual(out.get("permissionDecision"), "deny")
+
+    def test_a_question_in_a_turn_a_message_started(self):
+        self.prompt("s-alg1", "【派活 #2101】Alg-p2-01 → Alg-p1-01：需求包 packages/drafts/alg/x.md")
+        _, out = self.guard("s-alg1", "AskUserQuestion", {"questions": []})
+        self.assertIn("交给上一级的交付包", out.get("additionalContext", ""))          # a +1 goes up the chain
+        self.prompt("s-alg2", "【派活 #2105】PMO-p2-01 → Alg-p2-01：需求包 x.md")
+        _, out = self.guard("s-alg2", "AskUserQuestion", {"questions": []})
+        self.assertIn("【需拍板】", out.get("additionalContext", ""))                  # a +2 asks the entry
+        self.prompt("s-alg1", "研究员：先停一下")
+        _, out = self.guard("s-alg1", "AskUserQuestion", {"questions": []})
+        self.assertEqual(out, {})
+
+
+class CliGuardStaysTest(ProjectCase):
+    """CLI mode keeps the scribe's hard limit and asks the researcher in the main session."""
+
+    def test_second_scribe_is_denied(self):
+        _, out = self.guard("pmo-p2", "Agent", {"subagent_type": "pmo-scribe", "prompt": "登记请求"}, agent_id=None)
+        self.assertNotEqual(out.get("permissionDecision"), "deny")
+        _, out = self.guard("pmo-p2", "Agent", {"subagent_type": "pmo-scribe", "prompt": "登记请求"}, agent_id=None)
+        self.assertEqual(out.get("permissionDecision"), "deny")
+
+    def test_main_session_asks_and_bypass_denies(self):
+        cmd = {"command": "python3 -I .claude/agent-org/bin/ledger.py register packages/drafts/alg/x.md --apply"}
+        _, out = self.guard("", "Bash", cmd, agent_id=None)
+        self.assertEqual(out.get("permissionDecision"), "ask")
+        data = {"tool_name": "Bash", "tool_input": cmd, "cwd": self.tmp, "session_id": "s1", "permission_mode": "bypassPermissions"}
+        _, out = self.hook("guard.py", data)
+        self.assertEqual(out.get("permissionDecision"), "deny")
+        self.assertIn("终端", out.get("permissionDecisionReason", ""))
+
+    def test_reads_without_the_identity_flag_are_reminded(self):
+        _, out = self.guard("alg-p2", "Bash", {"command": "lark-cli docs +fetch --doc https://x.feishu.cn/wiki/A"})
+        self.assertNotEqual(out.get("permissionDecision"), "deny")
+        self.assertIn("--as user", out.get("additionalContext", ""))
+        _, out = self.guard("pmo-scribe", "Bash", {"command": "lark-cli docs +create --title t --markdown x"})
+        self.assertEqual(out.get("permissionDecision"), "allow")
+        self.assertTrue(out.get("updatedInput", {}).get("command", "").endswith("--as user"))
+        _, out = self.guard("pmo-scribe", "Bash", {"command": "lark-cli docs +create --title t --markdown x --as bot"})
+        self.assertEqual(out.get("permissionDecision"), "deny")
+
+    def test_inbox_and_feishu_still_reach_the_entry(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            route.notify(self.spec, self.tmp, "pmo-p2", "补充：数据集换成 v2")
+        route.append_inbox(self.tmp, "feishu", {"id": "m1", "ts": "2026-11-03T08:00:00+08:00", "from": "研究员（飞书私聊）",
+                                                "text": "今天先看评测", "read": False})
+        _, out = self.hook("inbox.py", {"hook_event_name": "UserPromptSubmit", "session_id": "e", "cwd": self.tmp, "prompt": "早"})
+        self.assertIn("数据集换成 v2", out.get("additionalContext", ""))
+        self.assertIn("今天先看评测", out.get("additionalContext", ""))
+
+
+class PoolHookTest(PoolProjectCase):
+    def setUp(self):
+        super().setUp()
+        self.started_pool()
+
+    def test_session_start_texts(self):
+        _, out = self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-mine", "source": "startup"})
+        self.assertIn("不要自己认领", out.get("additionalContext", ""))
+        _, out = self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-alg1", "source": "compact"})
+        text = out.get("additionalContext", "")
+        self.assertIn("本会话是 Alg-p1-01", text)
+        self.assertIn("未了事项", text)
+        manifest = os.path.join(self.tmp, ".claude", "agent-org", "manifest.json")
+        with open(manifest, encoding="utf-8") as f:
+            m = json.load(f)
+        m["plugin_version"] = "9.9.9"
+        with open(manifest, "w", encoding="utf-8") as f:
+            json.dump(m, f)
+        _, out = self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-alg1", "source": "resume"})
+        self.assertIn("规则已更新", out.get("additionalContext", ""))
+
+    def test_status_follows_the_events(self):
+        sid = "s-alg1"
+        steps = [
+            ({"hook_event_name": "PermissionRequest", "tool_name": "Bash"}, "instances.py", "waiting_researcher"),
+            ({"hook_event_name": "StopFailure", "error": "rate_limit"}, "instances.py", "failed:rate_limit"),
+            ({"hook_event_name": "Stop", "background_tasks": [{"id": "t1"}], "last_assistant_message": "跑着"}, "instances.py", "idle_bg"),
+            ({"hook_event_name": "Stop", "background_tasks": [], "last_assistant_message": "好了"}, "instances.py", "idle"),
+            ({"hook_event_name": "Notification", "notification_type": "permission_prompt"}, "instances.py", "waiting_researcher"),
+            ({"hook_event_name": "UserPromptSubmit", "prompt": "继续", "permission_mode": "auto"}, "inbox.py", "busy"),
+            ({"hook_event_name": "SessionEnd", "reason": "other"}, "instances.py", "offline"),
+        ]
+        for data, script, status in steps:
+            self.hook(script, dict(data, session_id=sid))
+            self.assertEqual(self.session(sid)["status"], status, data)
+        self.assertEqual(self.session(sid)["permission_mode"], "auto")
+        self.hook("instances.py", {"hook_event_name": "PermissionDenied", "session_id": sid, "reason": "x"})
+        self.assertEqual(self.session(sid)["denied"], 1)
+        self.assertIn("Alg-p1-01", self.pool()["claims"])                  # offline keeps the claim
+
+    def test_messages_are_recorded_and_checked(self):
+        _, out = self.prompt("s-alg1", "【派活 #2101】Alg-p2-01 → Alg-p1-01：需求包 packages/drafts/alg/x.md")
+        self.assertIn("没有登记回执", out.get("additionalContext", ""))
+        self.assertEqual(self.pool()["owners"]["2101"], "Alg-p1-01")
+        events = [json.loads(x) for x in self.read(".claude/logs/dispatch.jsonl").splitlines()]
+        msg = [e for e in events if e.get("event") == "message"][-1]
+        self.assertEqual((msg["kind"], msg["id"], msg["from"], msg["to"], msg["seen_by"]), ("assign", "2101", "Alg-p2-01", "Alg-p1-01", "Alg-p1-01"))
+        with open(os.path.join(self.tmp, "packages", "sent", "2102.json"), "w", encoding="utf-8") as f:
+            json.dump({"work_item_id": "2102"}, f)
+        _, out = self.prompt("s-alg1", "【派活 #2102】Alg-p2-01 → Alg-p1-01：需求包 x.md")
+        self.assertNotIn("没有登记回执", out.get("additionalContext", ""))
+        _, out = self.prompt("s-alg0", "【派活 #2102】Alg-p1-01 → Alg-p0-01：需求包 x.md")
+        self.assertIn("会话名：", out.get("additionalContext", ""))
+        _, out = self.prompt("s-alg0", "【派活 #2102】Alg-p1-01 → Alg-p0-01：需求包 x.md\n会话名：Alg-p0-2102")
+        self.assertNotIn("会话名：", out.get("additionalContext", "").split("你是 ")[0])
+
+    def test_the_dispatch_graph_is_a_reminder(self):
+        _, out = self.prompt("s-q2", "【派活 #2103】Alg-p1-01 → Quality-p2-01：送审包 x.md")
+        self.assertIn("派发图", out.get("additionalContext", ""))
+        for sid, text in (("s-alg1", "【交回 #2102】Alg-p0-01 → Alg-p1-01：交付包 y.md"),
+                          ("s-scribe", "【登记请求】Alg-p0-01 → PMO-p0-01：草稿 x.md"),
+                          ("s-entry", "【送审 #2102】Alg-p0-01 → PMO-p2-01：送审包 z.md")):
+            _, out = self.prompt(sid, text)
+            self.assertNotIn("派发图", out.get("additionalContext", ""), text)
+        self.prompt("s-alg1", "【派活 #2104】Alg-p2-01 → Alg-p1-01：需求包 x.md")
+        _, out = self.prompt("s-alg2", "【交回 #2104】Alg-p0-01 → Alg-p2-01：交付包 y.md")
+        self.assertIn("负责会话是 Alg-p1-01", out.get("additionalContext", ""))
+
+    def test_compaction_summary_is_kept(self):
+        self.hook("instances.py", {"hook_event_name": "PostCompact", "session_id": "s-alg2", "trigger": "auto",
+                                   "compact_summary": "在等 #2101 的交回"})
+        rec = json.loads(self.read(".claude/logs/compact/Alg-p2-01.jsonl").splitlines()[-1])
+        self.assertEqual(rec["summary"], "在等 #2101 的交回")
+
+    def test_open_items_are_injected_after_compaction(self):
+        self.prompt("s-alg1", "【派活 #2101】Alg-p2-01 → Alg-p1-01：需求包 x.md")
+        _, out = self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-alg2", "source": "compact"})
+        self.assertIn("#2101→Alg-p1-01", out.get("additionalContext", ""))
+        _, out = self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-alg1", "source": "compact"})
+        self.assertIn("#2101（交回给 Alg-p2-01）", out.get("additionalContext", ""))
+        self.prompt("s-alg2", "【交回 #2101】Alg-p1-01 → Alg-p2-01：交付包 y.md")
+        _, out = self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-alg2", "source": "compact"})
+        self.assertIn("未了事项：无", out.get("additionalContext", ""))
+
+
+class PoolInboxTest(PoolProjectCase):
+    def setUp(self):
+        super().setUp()
+        self.started_pool()
+
+    def test_each_session_reads_its_own_inbox(self):
+        self.assertEqual(self.route("notify", "alg-p1-01", "--text", "规格 v3 已签字", sid="s-entry")[0], 0)
+        self.route("notify", "Quality-p1-01", "--text", "给质量的", sid="s-entry")
+        _, out = self.prompt("s-q1", "继续")
+        self.assertIn("给质量的", out.get("additionalContext", ""))
+        self.assertNotIn("规格 v3", out.get("additionalContext", ""))
+        _, out = self.prompt("s-alg1", "继续")
+        self.assertIn("规格 v3 已签字", out.get("additionalContext", ""))
+        self.assertIn("来自 PMO-p2-01", out.get("additionalContext", ""))
+        _, out = self.prompt("s-alg1", "继续")
+        self.assertNotIn("规格 v3 已签字", out.get("additionalContext", ""))
+        route.append_inbox(self.tmp, "feishu", {"id": "m1", "ts": "2026-11-03T08:00:00+08:00", "from": "研究员（飞书私聊）",
+                                                "text": "今天先看评测", "read": False})
+        _, out = self.prompt("s-mine", "随便聊聊")
+        self.assertEqual(out, {})                                          # the researcher's own session reads nothing
+        _, out = self.prompt("s-alg2", "继续")
+        self.assertNotIn("今天先看评测", out.get("additionalContext", ""))
+        _, out = self.prompt("s-entry", "早")
+        self.assertIn("今天先看评测", out.get("additionalContext", ""))
+
+
+class PoolRouteTest(PoolProjectCase):
+    def setUp(self):
+        super().setUp()
+        self.started_pool()
+
+    def set_status(self, sid, status, minutes_ago=0):
+        path = os.path.join(self.tmp, ".claude", "state", "sessions", sid + ".json")
+        with open(path, encoding="utf-8") as f:
+            st = json.load(f)
+        at = (datetime.datetime.now().astimezone() - datetime.timedelta(minutes=minutes_ago)).isoformat(timespec="seconds")
+        st.update(status=status, status_at=at, last_tool_at=at)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(st, f)
+
+    def test_pool_suggests_whom_to_send_to(self):
+        self.set_status("s-alg1", "idle")
+        code, text = self.route("pool", "--role", "alg-p1", sid="s-alg2")
+        self.assertEqual(code, 0)
+        self.assertIn("建议：发给 Alg-p1-01", text)
+        self.assertIn("d-s-alg1", text)
+        self.set_status("s-alg1", "busy")
+        _, text = self.route("pool", "--role", "alg-p1", sid="s-alg2")
+        self.assertIn("还没到上限 3", text)
+        self.set_status("s-alg1", "busy", minutes_ago=20)
+        _, text = self.route("pool", "--role", "alg-p1", sid="s-alg2")
+        self.assertIn("不确定", text)
+        self.set_status("s-scribe", "busy")
+        _, text = self.route("pool", "--role", "pmo-scribe", sid="s-alg2")
+        self.assertIn("已到上限 1", text)
+
+    def test_owner_first_and_focus_skipped(self):
+        self.prompt("s-alg1", "【派活 #2101】Alg-p2-01 → Alg-p1-01：需求包 x.md")
+        self.set_status("s-alg1", "idle")
+        _, text = self.route("pool", "--role", "alg-p1", "--item", "2101", sid="s-alg2")
+        self.assertIn("它是 #2101 的负责会话", text)
+        self.assertEqual(self.route("focus", "open", "--topic", "谈规格", sid="s-alg1")[0], 0)
+        _, text = self.route("pool", "--role", "alg-p1", sid="s-alg2")
+        self.assertIn("研究员在用", text)
+        self.assertNotIn("建议：发给", text)
+        self.route("focus", "close", sid="s-alg1")
+        _, text = self.route("pool", "--role", "alg-p1", sid="s-alg2")
+        self.assertIn("建议：发给 Alg-p1-01", text)
+
+    def test_mixed_permission_modes_are_flagged(self):
+        self.prompt("s-alg1", "继续", permission_mode="auto")
+        self.prompt("s-alg0", "继续", permission_mode="auto")
+        self.prompt("s-alg2", "继续", permission_mode="bypassPermissions")
+        _, text = self.route("pool", sid="s-entry")
+        self.assertIn("Alg-p2-01 的权限模式和池里多数会话不是一类", text)
+
+    def test_queue_recover_watch_refill_audit(self):
+        self.set_status("s-alg1", "idle")
+        code, text = self.route("--offline", "pool", "--queue", "Alg-p2-01", sid="s-alg2")
+        self.assertEqual(code, 0)
+        self.assertIn("Alg-p1-01", text)
+        self.prompt("s-alg1", "【派活 #2101】Alg-p2-01 → Alg-p1-01：需求包 x.md")
+        self.set_status("s-alg0", "busy")
+        code, text = self.route("pool", "--recover", sid="s-entry")
+        self.assertIn("给 Alg-p2-01 发消息【通知 #2101】", text)
+        self.assertIn("Alg-p0-01：在忙", text)
+        code, text = self.route("pool", "--watch", "--once", sid="s-entry")
+        self.assertEqual(code, 0)
+        self.assertIn("Alg-p1-01", text)
+        self.assertEqual(self.route("refill", "alg-p0", "--count", "2", sid="s-alg2")[0], 0)
+        self.assertEqual(self.pool()["refills"][-1]["role"], "alg-p0")
+        self.assertIn("补位请求", self.read("inbox/PMO-p2-01.jsonl"))
+        self.guard("s-alg1", "Write", {"file_path": os.path.join(self.tmp, "packages", "drafts", "quality", "x.md")})
+        code, text = self.route("audit", sid="s-entry")
+        self.assertIn("Alg-p1-01：", text)
+
+    def test_session_names_in_classify(self):
+        sys.path.insert(0, os.path.join(self.tmp, ".claude", "agent-org", "bin"))
+        out = route.classify_text(self.spec, self.tmp, "alg-p1-02 那边的结果出来了吗", True)
+        self.assertEqual((out["row"], out.get("role")), ("R1", "alg-p1"))
+        out = route.classify_text(self.spec, self.tmp, "Alg-p0-01 在干嘛", True)
+        self.assertNotIn("work_item", out)
+        out = route.classify_text(self.spec, self.tmp, "Alg-p0-2101 跑完了", True)
+        self.assertEqual(out.get("work_item"), "2101")
+
+
+class LedgerLockTest(ProjectCase):
+    def test_a_held_lock_stops_another_write(self):
+        import fcntl
+        path = os.path.join(self.tmp, "feishu", ".ledger.lock")
+        with open(path, "a+") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            old = ledger.LOCK_WAIT
+            ledger.LOCK_WAIT = 0
+            try:
+                with mock.patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": self.tmp}):
+                    code, out = self.run_quiet(ledger.main, ["comment", "2101", "--text", "x", "--apply"])
+            finally:
+                ledger.LOCK_WAIT = old
+                fcntl.flock(f, fcntl.LOCK_UN)
+        self.assertEqual(code, 1)
+        self.assertIn("台账正在被别的写入占用", out)
+
+    def test_previews_take_no_lock(self):
+        with mock.patch.object(ledger, "write_lock", side_effect=AssertionError("locked")):
+            with mock.patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": self.tmp}):
+                code, _ = self.run_quiet(ledger.main, ["--offline", "comment", "2101", "--text", "x"])
+        self.assertEqual(code, 0)
+
+    def test_ids_are_replaced_whole(self):
+        path = os.path.join(self.tmp, "feishu", "ids.json")
+        with mock.patch.object(ledger.os, "replace", wraps=os.replace) as rep:
+            ledger.save_json(path, {"schema": "x"})
+        rep.assert_called_once()
+        self.assertEqual(json.loads(open(path, encoding="utf-8").read()), {"schema": "x"})
+        self.assertEqual([n for n in os.listdir(os.path.dirname(path)) if n.endswith(".tmp")], [])
+
+
+class DispatchGraphTest(unittest.TestCase):
+    def spec_with(self, change):
+        spec = orgspec.OrgSpec()
+        change(spec.rules, spec.terms)
+        return spec
+
+    def test_validate_catches_graph_mistakes(self):
+        spec = self.spec_with(lambda r, t: r["dispatch"]["assign"].append({"from": "p2", "to": "alg-p9"}))
+        self.assertTrue(any("alg-p9" in p for p in spec.validate()))
+        spec = self.spec_with(lambda r, t: t["msg"].pop("notice"))
+        self.assertTrue(any("notice" in p for p in spec.validate()))
+        spec = self.spec_with(lambda r, t: r["dispatch"]["kinds"]["review"].update(to="pmo-p9"))
+        self.assertTrue(any("pmo-p9" in p for p in spec.validate()))
+
+    def test_header_regex(self):
+        rx = orgspec.OrgSpec().message_header_re()
+        self.assertEqual(rx.search("【派活 #2101】Alg-p2-01 → Alg-p1-01：需求包").groups(), ("派活", "2101", "Alg-p2-01", "Alg-p1-01"))
+        self.assertEqual(rx.search("【交回 #2101（重发，上一条作废）】Alg-p1-01 -> Alg-p2-01").group(1, 2), ("交回", "2101"))
+        self.assertIsNone(rx.search("【备注】随便写写"))
+
+
+class PoolReviewIdentityTest(PoolProjectCase):
+    """Fixes from the adversarial review of 0.5.0: identity and hard rules."""
+    W = "python3 -I .claude/agent-org/bin/ledger.py register packages/drafts/alg/x.md --apply"
+
+    def setUp(self):
+        super().setUp()
+        self.started_pool()
+
+    def decision(self, sid, command, desk=None, **extra):
+        return self.bash(sid, command, desk=desk, **extra)[1].get("permissionDecision")
+
+    def test_a_process_with_the_scribes_desktop_id_is_not_the_scribe(self):
+        _, out = self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-nested", "source": "startup"},
+                           desk="d-scribe")
+        self.assertIn("共用一个桌面会话 ID", out.get("additionalContext", ""))
+        self.assertEqual(self.decision("s-nested", self.W, desk="d-scribe"), "deny")
+        self.assertEqual(self.pool()["claims"]["PMO-p0-01"]["session_id"], "s-scribe")
+        self.route("notify", "PMO-p0-01", "--text", "登记请求：x", sid="s-entry")
+        _, out = self.prompt("s-nested", "继续", desk="d-scribe")
+        self.assertNotIn("登记请求：x", out.get("additionalContext", ""))
+        self.assertEqual(self.decision("s-scribe", self.W), "allow")
+        # once the scribe's own session has ended, a /clear moves the claim to the new session
+        self.hook("instances.py", {"hook_event_name": "SessionEnd", "session_id": "s-scribe", "reason": "clear"})
+        self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-scribe-2", "source": "clear"}, desk="d-scribe")
+        self.assertEqual(self.pool()["claims"]["PMO-p0-01"]["session_id"], "s-scribe-2")
+
+    def test_monitor_commands_are_checked_like_bash(self):
+        _, out = self.guard("s-alg1", "Monitor", {"command": self.W, "description": "x", "timeout_ms": 60000})
+        self.assertEqual(out.get("permissionDecision"), "deny")
+        _, out = self.guard("s-alg1", "Monitor", {"command": "tail -f runs/alg/log.txt", "description": "x"})
+        self.assertNotEqual(out.get("permissionDecision"), "deny")
+
+    def test_claim_commands_are_found_by_parsing(self):
+        R = self.R
+        for cmd in ("python3 -I %s --offline release PMO-p0-01" % R, "bash -c 'python3 -I %s release PMO-p0-01'" % R):
+            self.assertEqual(self.decision("s-researcher", cmd), "deny", cmd)
+        self.assertEqual(self.decision("s-researcher", "python3 -I %s 'release' PMO-p0-01" % R), "ask")   # same as the plain form
+        self.assertEqual(self.decision("s-alg1", "python3 -I %s 'release' PMO-p0-01" % R), "deny")
+        self.assertEqual(self.decision("s-alg2", "python3 -I %s --offline expect PMO-p0-02 --role pmo-scribe --session s-alg1" % R), "deny")
+        for cmd in ('grep -n "route.py claim" CLAUDE.md', "echo '研究员请运行 route.py release Alg-p0-01'",
+                    "cat > packages/drafts/alg/n.md <<'EOF'\npython3 -I %s expect Alg-p0-02 --role alg-p0 --desk d\nEOF" % R):
+            self.assertIsNone(self.decision("s-alg2", cmd), cmd)
+
+    def test_claim_with_an_asserted_desk_or_an_old_session_asks(self):
+        self.route("expect", "RnD-p2-01", "--role", "rnd-p2", "--desk", "d-rnd", sid="s-researcher")
+        cmd = "python3 -I %s claim rnd-p2 --as RnD-p2-01 --desk d-rnd" % self.R
+        self.assertEqual(self.decision("s-term", cmd), "ask")              # no desktop ID in the hook to compare with
+        cmd = "python3 -I %s claim rnd-p2 --as RnD-p2-01" % self.R
+        self.assertIsNone(self.decision("s-term", cmd))                    # without --desk route.py uses the session's own IDs
+        code, text = self.route("claim", "rnd-p2", "--as", "RnD-p2-01", "--wait", "0", sid="s-term")
+        self.assertEqual(code, 1)                                          # and finds no permit for them
+        self.assertNotIn("RnD-p2-01", self.pool()["claims"])
+        code, text = self.route("claim", "rnd-p2", "--as", "RnD-p2-01", "--de", "d-rnd", "--wait", "0", sid="s-term")
+        self.assertNotEqual(code, 0)                                       # no abbreviated options
+
+    def test_a_stale_permit_can_be_replaced_or_released(self):
+        self.route("release", "PMO-p0-01", sid="s-researcher")
+        self.assertEqual(self.route("expect", "PMO-p0-01", "--role", "pmo-scribe", "--desk", "d-dead", sid="s-entry")[0], 0)
+        code, text = self.route("expect", "PMO-p0-01", "--role", "pmo-scribe", "--desk", "d-new", sid="s-entry")
+        self.assertEqual(code, 0, text)
+        self.assertEqual([p["desk"] for p in self.pool()["permits"] if p["role"] == "pmo-scribe"], ["d-new"])
+        code, text = self.route("release", "PMO-p0-01", sid="s-researcher")
+        self.assertEqual(code, 0, text)
+        self.assertIn("许可", text)
+        self.assertEqual([p for p in self.pool()["permits"] if p["role"] == "pmo-scribe"], [])
+
+    def test_git_commands_that_touch_the_working_tree(self):
+        for cmd in ('bash -c "git checkout main"', "sh -c 'git stash'", "/usr/bin/git checkout main", "git -P stash",
+                    "git --git-dir .git --work-tree . checkout main", "git pull --rebase origin main", "\\git stash"):
+            self.assertEqual(self.decision("s-alg1", cmd), "deny", cmd)
+        for cmd in ('git commit -m "docs: never git stash in the pool"', 'grep -n "git stash" docs/x.md', "git log -3",
+                    "cat <<'EOF' > n.md\nDo not run git rebase here.\nEOF"):
+            self.assertIsNone(self.decision("s-alg1", cmd), cmd)
+
+    def test_a_git_prompt_does_not_hide_a_denied_feishu_command(self):
+        cmd = "git stash && lark-cli docs +update --doc x --command overwrite --content y --yes --as user"
+        self.assertEqual(self.decision("s-researcher", cmd), "deny")
+
+    def test_two_scribes_stop_every_ledger_write(self):
+        pl = self.pool()
+        pl["claims"]["PMO-p0-02"] = dict(pl["claims"]["PMO-p0-01"], name="PMO-p0-02", session_id="s-x", desk="d-x")
+        self.write_pool(pl)
+        self.assertEqual(self.decision("s-researcher", self.W), "deny")
+
+    def test_fixed_names_and_the_feishu_inbox(self):
+        _, out = self.opening("pmo-p2", "PMO-p2-07", "s-other")
+        self.assertIn("固定是 PMO-p2-01", out.get("additionalContext", ""))
+        self.assertEqual(self.route("expect", "PMO-p0-09", "--role", "pmo-scribe", "--desk", "d9", sid="s-researcher")[0], 1)
+        code, text = self.route("notify", "feishu", "--from", "研究员（飞书私聊）", "--text", "补位", sid="s-alg1")
+        self.assertNotEqual(code, 0)
+        self.route("notify", "PMO-p2-01", "--from", "研究员", "--text", "冒名", sid="s-alg1")
+        msg = json.loads(self.read("inbox/PMO-p2-01.jsonl").splitlines()[-1])
+        self.assertEqual(msg["from"], "Alg-p1-01")
+
+    def test_odd_state_files_never_crash_the_guard(self):
+        for bad in ({"version": 1, "claims": {}, "permits": None}, {"claims": {"X": "y"}}, {"claims": {}, "tombstones": {}}):
+            self.write_pool(bad)
+            code, out = self.bash("s-researcher", "ls")
+            self.assertEqual(code, 0, bad)
+            self.assertEqual(self.bash("s-scribe", self.W)[1].get("permissionDecision"), "deny", bad)
+        with open(os.path.join(self.tmp, ".claude", "state", "edits.json"), "w", encoding="utf-8") as f:
+            json.dump([{"who": "x"}], f)
+        code, _ = self.guard("s-alg1", "Write", {"file_path": os.path.join(self.tmp, "runs", "alg", "n.md")})
+        self.assertEqual(code, 0)
+
+    def test_session_start_texts_for_odd_origins(self):
+        _, out = self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-term2", "source": "startup",
+                                            "agent_type": "alg-p2"})
+        self.assertIn("claude --agent alg-p2", out.get("additionalContext", ""))
+        with open(os.path.join(self.tmp, ".claude", "state", "pool.json"), "w", encoding="utf-8") as f:
+            f.write("{broken")
+        _, out = self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-alg1", "source": "compact"})
+        self.assertIn("读不出来", out.get("additionalContext", ""))
+        self.assertNotIn("研究员自己的会话", out.get("additionalContext", ""))
+
+    def test_a_refused_permit_is_dropped(self):
+        self.route("expect", "RnD-p2-01", "--role", "rnd-p2", "--desk", "d-a", sid="s-researcher")
+        self.opening("rnd-p2", "RnD-p2-01", "s-b")                        # the researcher's own opening line wins
+        self.bash("s-a", "ls", desk="d-a")
+        self.bash("s-a", "ls", desk="d-a")
+        refused = [e for e in map(json.loads, self.read(".claude/logs/dispatch.jsonl").splitlines()) if e.get("event") == "claim_refused"]
+        self.assertEqual(len(refused), 1)
+        self.assertEqual([p for p in self.pool()["permits"] if p["role"] == "rnd-p2"], [])
+
+    @unittest.skipUnless(sys.platform == "darwin", "case folding only on macOS")
+    def test_a_path_spelled_in_another_case_is_the_same_file(self):
+        os.makedirs(os.path.join(self.tmp, "repo", "eval"), exist_ok=True)
+        with open(os.path.join(self.tmp, "repo", "eval", "score.py"), "w") as f:
+            f.write("x")
+        _, out = self.guard("s-alg1", "Edit", {"file_path": os.path.join(self.tmp, "repo", "EVAL", "score.py")})
+        self.assertEqual(out.get("permissionDecision"), "deny")
+        _, out = self.guard("s-infra1" if False else "s-alg1", "Edit", {"file_path": os.path.join(self.tmp, ".claude", "State", "pool.json")})
+        self.assertEqual(out.get("permissionDecision"), "deny")
+
+    def test_policy_of_another_version_fails_closed(self):
+        path = os.path.join(self.hooks, "policy.json")
+        with open(path, encoding="utf-8") as f:
+            policy = json.load(f)
+        policy["version"] = 3
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(policy, f)
+        code, _ = self.bash("s-researcher", "ls")
+        self.assertEqual(code, 2)
+
+
+class PoolReviewStateTest(PoolProjectCase):
+    """Fixes from the adversarial review of 0.5.0: status, messages, inboxes, route.py."""
+
+    def setUp(self):
+        super().setUp()
+        self.started_pool()
+
+    def set_status(self, sid, **fields):
+        path = os.path.join(self.tmp, ".claude", "state", "sessions", sid + ".json")
+        with open(path, encoding="utf-8") as f:
+            st = json.load(f)
+        st.update(fields)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(st, f)
+
+    def ago(self, minutes):
+        return (datetime.datetime.now().astimezone() - datetime.timedelta(minutes=minutes)).isoformat(timespec="seconds")
+
+    def test_a_quoted_header_is_not_a_message(self):
+        self.prompt("s-alg1", "【派活 #2101】Alg-p2-01 → Alg-p1-01：需求包 x.md")
+        self.prompt("s-alg2", "【交回 #2101】Alg-p1-01 → Alg-p2-01：交付包 y.md")
+        self.prompt("s-alg2", "你上周收到的【派活 #2101】Alg-p2-01 → Alg-p1-01 那件事，结论再讲一遍。")
+        self.prompt("s-entry", "这条“【派活 #2101】Alg-p1-01 → Alg-p0-01：需求包”对方收到了吗？")
+        self.assertEqual(self.pool()["owners"]["2101"], "Alg-p1-01")
+        _, out = self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-alg2", "source": "compact"})
+        self.assertIn("未了事项：无", out.get("additionalContext", ""))
+        self.assertEqual(self.session("s-alg2")["turn_origin"], "other")
+
+    def test_a_message_addressed_to_another_session_takes_no_lease(self):
+        _, out = self.prompt("s-alg2", "【派活 #2103】PMO-p2-01 → Infra-p2-01：需求包 x.md")
+        self.assertIn("不是本会话", out.get("additionalContext", ""))
+        self.assertNotIn("2103", self.pool()["owners"])
+
+    def test_a_late_report_from_a_replaced_session_keeps_the_open_item(self):
+        self.route("expect", "Alg-p1-02", "--role", "alg-p1", "--desk", "d-a12", sid="s-alg2")
+        self.claim("alg-p1", "Alg-p1-02", "s-alg12", desk="d-a12")
+        self.prompt("s-alg1", "【派活 #2101】Alg-p2-01 → Alg-p1-01：需求包 x.md")
+        self.prompt("s-alg12", "【派活 #2101】Alg-p2-01 → Alg-p1-02：需求包 x.md（重派）")
+        self.prompt("s-alg2", "【交回 #2101】Alg-p1-01 → Alg-p2-01：交付包 y.md")
+        _, out = self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-alg2", "source": "compact"})
+        self.assertIn("#2101→Alg-p1-02", out.get("additionalContext", ""))
+
+    def test_p0_work_names_stand_for_their_claim(self):
+        self.prompt("s-alg0", "【派活 #2103】Alg-p1-01 → Alg-p0-2103：需求包 x.md\n会话名：Alg-p0-2103")
+        self.assertEqual(self.pool()["owners"]["2103"], "Alg-p0-01")
+        _, out = self.prompt("s-alg1", "【交回 #2103】Alg-p0-2103 → Alg-p1-01：交付包 y.md")
+        ctx = out.get("additionalContext", "")
+        self.assertNotIn("不在会话池的认领表里", ctx)
+        self.assertNotIn("负责会话是", ctx)
+        _, out = self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-alg0", "source": "compact"})
+        self.assertIn("未了事项：无", out.get("additionalContext", ""))
+        self.route("notify", "Alg-p0-2103", "--text", "补充：数据换成 v2", sid="s-entry")
+        _, out = self.prompt("s-alg0", "继续")
+        self.assertIn("数据换成 v2", out.get("additionalContext", ""))
+
+    def test_notify_to_a_role_with_several_sessions(self):
+        self.route("expect", "Alg-p1-02", "--role", "alg-p1", "--desk", "d-a12", sid="s-alg2")
+        self.claim("alg-p1", "Alg-p1-02", "s-alg12", desk="d-a12")
+        code, text = self.route("notify", "alg-p1", "--text", "x", sid="s-entry")
+        self.assertNotEqual(code, 0)
+        self.assertIn("Alg-p1-01", text)
+        self.assertEqual(self.route("notify", "quality-p1", "--text", "y", sid="s-entry")[0], 0)   # one claim: it
+        _, out = self.prompt("s-q1", "继续")
+        self.assertIn("y", out.get("additionalContext", ""))
+
+    def test_status_after_a_prompt_a_background_call_and_a_compaction(self):
+        self.hook("instances.py", {"hook_event_name": "PermissionRequest", "session_id": "s-alg1", "tool_name": "Bash", "tool_use_id": "t1"})
+        self.assertEqual(self.session("s-alg1")["status"], "waiting_researcher")
+        self.hook("guard.py", {"hook_event_name": "PreToolUse", "session_id": "s-alg1", "tool_name": "Bash",
+                               "tool_use_id": "t2", "tool_input": {"command": "ls"}})
+        self.assertEqual(self.session("s-alg1")["status"], "busy")
+        self.hook("instances.py", {"hook_event_name": "PermissionRequest", "session_id": "s-alg1", "tool_name": "Bash", "tool_use_id": "t3"})
+        self.hook("audit.py", {"hook_event_name": "PostToolUse", "session_id": "s-alg1", "tool_name": "Bash", "tool_use_id": "t3",
+                               "tool_input": {"command": "ls"}, "tool_response": {"stdout": ""}})
+        self.assertEqual(self.session("s-alg1")["status"], "busy")
+        self.hook("instances.py", {"hook_event_name": "Stop", "session_id": "s-alg1", "background_tasks": [{"id": "b"}]})
+        self.hook("guard.py", {"hook_event_name": "PreToolUse", "session_id": "s-alg1", "agent_id": "bg", "agent_type": "Explore",
+                               "tool_name": "Bash", "tool_input": {"command": "ls"}})
+        self.assertEqual(self.session("s-alg1")["status"], "idle_bg")
+        self.prompt("s-alg1", "继续")
+        self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-alg1", "source": "compact"})
+        self.assertEqual(self.session("s-alg1")["status"], "busy")
+
+    def test_a_turn_that_just_started_is_not_uncertain(self):
+        self.set_status("s-alg1", status="idle", last_tool_at=self.ago(60), status_at=self.ago(60))
+        self.prompt("s-alg1", "【通知】PMO-p2-01 → Alg-p1-01：看一下")
+        _, text = self.route("pool", "--role", "alg-p1", sid="s-alg2")
+        self.assertIn("在忙", text)
+        self.assertNotIn("不确定", text)
+
+    def test_recover_lists_quota_and_status_before_the_end(self):
+        self.prompt("s-alg0", "继续")
+        self.hook("instances.py", {"hook_event_name": "SessionEnd", "session_id": "s-alg0", "reason": "other"})
+        self.hook("instances.py", {"hook_event_name": "Notification", "session_id": "s-q1", "notification_type": "quota_auto_resume_stale"})
+        _, text = self.route("pool", "--recover", sid="s-entry")
+        self.assertIn("Alg-p0-01：应用退出前在忙", text)
+        self.assertIn("Quality-p1-01：额度暂停过", text)
+
+    def test_injection_and_opening_context_stay_within_budget(self):
+        for i in range(400):
+            self.prompt("s-alg2", "【派活 #%d】PMO-p2-01 → Alg-p2-01：需求包 x.md" % (3000 + i))
+        _, out = self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-entry", "source": "compact"})
+        text = out.get("additionalContext", "")
+        self.assertLessEqual(len(text), 9500)
+        self.assertIn("另有", text)
+        self.assertIn("## 怎么干活", text)
+        for i in range(20):
+            route.append_inbox(self.tmp, "feishu", {"id": "m%d" % i, "ts": "2026-11-03T08:00:00+08:00", "from": "研究员（飞书私聊）",
+                                                    "text": "长消息" * 100, "read": False})
+        self.route("release", "PMO-p2-01", sid="s-researcher")
+        _, out = self.opening("pmo-p2", "PMO-p2-01", "s-entry-new")
+        self.assertLessEqual(len(out.get("additionalContext", "")), 9600)
+        self.assertIn("还有 20 条消息没看", out.get("additionalContext", ""))
+        _, out = self.prompt("s-entry-new", "早")
+        self.assertIn("长消息", out.get("additionalContext", ""))
+
+    def test_a_malformed_inbox_line_loses_nothing(self):
+        path = os.path.join(self.tmp, "inbox", "pmo-p2.jsonl")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps("补位请求：随手写的一行") + "\n")
+        self.route("notify", "PMO-p2-01", "--text", "真正的留言", sid="s-alg2")
+        _, out = self.prompt("s-entry", "早")
+        self.assertIn("真正的留言", out.get("additionalContext", ""))
+
+    def test_focus_flag_lapses_for_good(self):
+        self.route("focus", "open", "--topic", "直接问路由", sid="s-router" if False else "s-alg1")
+        self.set_status("s-alg1", status="idle", status_at=self.ago(60), last_tool_at=self.ago(60))
+        _, text = self.route("pool", "--role", "alg-p1", sid="s-alg2")
+        self.assertIn("建议：发给 Alg-p1-01", text)
+        self.prompt("s-alg1", "【派活 #2101】Alg-p2-01 → Alg-p1-01：需求包 x.md")
+        self.hook("instances.py", {"hook_event_name": "Stop", "session_id": "s-alg1"})
+        _, text = self.route("pool", "--role", "alg-p1", sid="s-alg2")
+        self.assertNotIn("研究员在用", text)
+        self.assertNotIn("Alg-p1-01", self.pool()["focus"])
+
+    def test_refills_are_consumed_by_new_claims(self):
+        self.route("refill", "alg-p0", sid="s-alg2")
+        self.route("expect", "Alg-p0-02", "--role", "alg-p0", "--desk", "d-a02", sid="s-alg2")
+        self.claim("alg-p0", "Alg-p0-02", "s-a02", desk="d-a02")
+        _, text = self.route("pool", "--watch", "--once", sid="s-entry")
+        self.assertNotIn("待补位", text)
+
+    def test_the_cap_and_the_refill_rows(self):
+        code, text = self.route("claim", "alg-p2", "--as", "Alg-p2-01", sid="s-alg2")
+        self.assertIn("补位用", text)
+        self.assertIn("Alg-p1-02", text)
+        with open(self.task_path, encoding="utf-8") as f:
+            task = json.load(f)
+        task["pool"].update(max_sessions=15)
+        with open(self.task_path, "w", encoding="utf-8") as f:
+            json.dump(task, f, ensure_ascii=False)
+        with self.assertRaises(setup.SetupError):
+            setup.build_plan(self.tmp, self.task_path, None)
+        policy_path = os.path.join(self.hooks, "policy.json")
+        with open(policy_path, encoding="utf-8") as f:
+            policy = json.load(f)
+        policy["pool"]["max_sessions"] = len(self.pool()["claims"])
+        with open(policy_path, "w", encoding="utf-8") as f:
+            json.dump(policy, f)
+        code, text = self.route("expect", "Alg-p0-02", "--role", "alg-p0", "--desk", "d-a02", sid="s-alg2")
+        self.assertEqual(code, 1)
+        self.assertIn("max_sessions", text)
+
+    def test_an_org_subagent_in_the_pool_has_no_pool_name(self):
+        _, out = self.hook("instances.py", {"hook_event_name": "SubagentStart", "session_id": "s-alg2", "agent_id": "a9",
+                                            "agent_type": "alg-p1"})
+        self.assertIn("不是会话池里的会话", out.get("additionalContext", ""))
+
+    def test_queue_lists_only_what_the_caller_dispatches(self):
+        rows = {"open": [{"work_item_id": "2201", "work_item_status": "待开工", "name": "需求包（Alg-p1-01）：跑消融 A"},
+                         {"work_item_id": "2202", "work_item_status": "待开工", "name": "需求包（Alg-p2-01）：阶段二"}],
+                "cross": [{"work_item_id": "2301", "work_item_status": "待接单", "name": "需求包（Alg-p2-01）：要数据"}]}
+        with mock.patch.object(ledger, "Ledger"), \
+                mock.patch.object(ledger, "query", side_effect=lambda lg, name, seq=None, as_json=False: rows[name]):
+            mine = route.queue_rows(self.tmp, json.loads(self.read(".claude/hooks/policy.json")),
+                                    self.pool()["claims"]["Alg-p2-01"], "alg")
+            entry = route.queue_rows(self.tmp, json.loads(self.read(".claude/hooks/policy.json")),
+                                     self.pool()["claims"]["PMO-p2-01"], "pmo")
+        self.assertEqual([r["work_item_id"] for r in mine], ["2202"])
+        self.assertEqual([r["work_item_id"] for r in entry], ["2301"])
+
+
+class ReviewTextTest(PoolProjectCase):
+    """Fixes from the adversarial review of 0.5.0: generated text in both modes."""
+
+    def test_pool_role_texts(self):
+        p1, p0, q0 = (self.read(".claude/agents/%s.md" % r) for r in ("alg-p1", "alg-p0", "quality-p0"))
+        for text in (p1, p0):
+            self.assertNotIn("跨序列的需求包、送审包、决策包写成草稿发给入口", text)
+            self.assertIn("写进交给上一级的交付包", text)
+        self.assertIn("开工：否", p1)
+        self.assertIn("消息抬头都用它", p0)
+        self.assertNotIn("执行结果可以直接送审", q0)
+        self.assertNotIn("研究员在本会话里研究员", self.read(".claude/agents/pmo-p2.md"))
+        self.assertIn("会话池模式", self.read("org/decisions.md"))
+        self.assertIn("用 Agent 工具派书记员", self.read("CLAUDE.md"))
+
+    def test_cli_texts(self):
+        tmp = tempfile.mkdtemp(prefix="agent-org-cli-")
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                plan = setup.build_plan(tmp, TASK, None)
+            self.assertNotIn("会话池模式（", plan.files["org/decisions.md"][0])
+            self.assertIn("同时派第二个书记员", plan.files["CLAUDE.md"][0])
+            self.assertNotIn("研究员在本会话里研究员", plan.files[".claude/agents/pmo-p2.md"][0])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_check_counts_sessions_and_the_checklist_shows_rebuild_lines(self):
+        self.started_pool()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            setup.check(self.tmp)
+        self.assertIn("会话池还没开齐", out.getvalue())
+        self.route("release", "Alg-p2-01", sid="s-researcher")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            setup.main(["pool", "--target", self.tmp])
+        self.assertIn("重建句", out.getvalue())
+
+
+class CliReviewTest(ProjectCase):
+    """CLI regressions found by the adversarial review of 0.5.0."""
+
+    def test_session_names_go_to_the_role_inbox(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            route.notify(self.spec, self.tmp, "Alg-p2-01", "新数据到了", work_item="2101")
+        data = {"hook_event_name": "UserPromptSubmit", "session_id": "f", "agent_type": "alg-p2", "cwd": self.tmp, "prompt": "继续"}
+        _, out = self.hook("inbox.py", data)
+        self.assertIn("新数据到了", out.get("additionalContext", ""))
+        with self.assertRaises(SystemExit):
+            route.notify(self.spec, self.tmp, "Nope-p2-01", "x")
+
+    def test_a_successful_agent_call_keeps_its_reservation(self):
+        self.guard("pmo-p2", "Agent", {"subagent_type": "pmo-scribe", "prompt": "登记请求", "run_in_background": True},
+                   agent_id=None)
+        self.hook("audit.py", {"hook_event_name": "PostToolUse", "tool_name": "Agent", "tool_use_id": None,
+                               "session_id": "s1", "tool_input": {}, "tool_response": {"status": "async_launched"}})
+        _, out = self.guard("pmo-p2", "Agent", {"subagent_type": "pmo-scribe", "prompt": "登记请求"}, agent_id=None)
+        self.assertEqual(out.get("permissionDecision"), "deny")
+
+    def test_an_ask_keeps_the_identity_rewrite(self):
+        _, out = self.guard("", "Bash", {"command": "lark-cli docs +create --title t --markdown x"}, agent_id=None)
+        self.assertEqual(out.get("permissionDecision"), "ask")
+        self.assertTrue(out.get("updatedInput", {}).get("command", "").endswith("--as user"))
+
+    def test_guard_and_policy_are_updated_as_a_pair(self):
+        with open(os.path.join(self.hooks, "guard.py"), "a", encoding="utf-8") as f:
+            f.write("\n# local change\n")
+        plan = setup.build_plan(self.tmp, TASK, None)
+        acts = {rel: kind for kind, rel, _ in setup.actions_for(self.tmp, plan)}
+        self.assertEqual(acts[".claude/hooks/guard.py"], "new")
+        self.assertIn(acts[".claude/hooks/policy.json"], ("new", "same"))
+
+
+class PoolSecondReviewTest(PoolProjectCase):
+    """Fixes from the second adversarial review of 0.5.0."""
+    W = "python3 -I .claude/agent-org/bin/ledger.py register packages/drafts/alg/x.md --apply"
+
+    def setUp(self):
+        super().setUp()
+        self.started_pool()
+
+    def decision(self, sid, command, desk=None, **extra):
+        return self.bash(sid, command, desk=desk, **extra)[1].get("permissionDecision")
+
+    def test_a_resumed_nested_run_is_still_a_desk_conflict(self):
+        self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-n1", "source": "startup"}, desk="d-scribe")
+        _, out = self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-n1", "source": "resume"}, desk="d-scribe")
+        self.assertIn("共用一个桌面会话 ID", out.get("additionalContext", ""))
+        self.assertEqual(self.decision("s-n1", self.W, desk="d-scribe"), "deny")
+        self.assertEqual(self.pool()["claims"]["PMO-p0-01"]["session_id"], "s-scribe")
+        # a same-ID run that ends marks the session offline, but that frees nothing
+        self.hook("instances.py", {"hook_event_name": "SessionEnd", "session_id": "s-scribe", "reason": "other"})
+        self.assertEqual(self.decision("s-other", self.W, desk="d-scribe"), "deny")
+        self.assertEqual(self.pool()["claims"]["PMO-p0-01"]["session_id"], "s-scribe")
+
+    def test_commands_hidden_in_substitutions_pipes_and_heredocs(self):
+        for cmd in ('out="$(git stash 2>&1)"', "echo `git stash`", "bash <<'EOF'\ngit checkout main\nEOF",
+                    'echo "git stash" | bash', 'bash <<< "git stash"', "find . -maxdepth 0 -exec git stash \\;",
+                    "env -S 'git stash'", "tcsh -c 'git stash'", "xcrun git stash", "gh pr checkout 123"):
+            self.assertEqual(self.decision("s-alg1", cmd), "deny", cmd)
+        R = self.R
+        for cmd in ('out="$(python3 -I %s release PMO-p0-01)"' % R, "python3 -X utf8 %s release PMO-p0-01" % R,
+                    "python3 -W ignore -I %s release PMO-p0-01" % R):
+            self.assertEqual(self.decision("s-researcher", cmd), "deny", cmd)
+
+    def test_read_only_and_elsewhere_git_is_fine(self):
+        for cmd in ("git stash list", "git stash show -p stash@{0}", "git checkout --help", "git clean -n",
+                    "git -C /tmp/other-clone checkout v1.2", "cd /tmp/other-clone && git checkout v1.2"):
+            self.assertIsNone(self.decision("s-alg1", cmd), cmd)
+
+    def test_identity_variables_stay_put(self):
+        cmd = "env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_HOST_SESSION_ID python3 -I %s notify PMO-p0-01 --text x" % self.R
+        self.assertEqual(self.decision("s-alg1", cmd), "deny")
+        self.assertEqual(self.decision("s-alg1", "CLAUDE_CODE_SESSION_ID=s-scribe %s" % self.W), "deny")
+        self.assertIsNone(self.decision("s-alg1", "echo $CLAUDE_CODE_SESSION_ID"))
+
+    def test_terminal_panel_commands_are_checked(self):
+        _, out = self.guard("s-alg1", "mcp__terminal__run_in_terminal", {"command": self.W})
+        self.assertEqual(out.get("permissionDecision"), "deny")
+
+    def test_claim_fields_of_the_wrong_type(self):
+        pl = self.pool()
+        pl["claims"]["PMO-p0-01"]["session_id"] = 7
+        self.write_pool(pl)
+        code, out = self.bash("s-alg1", "ls")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.decision("s-scribe", self.W), "deny")
+
+    def test_a_long_message_does_not_block_the_inbox(self):
+        self.route("notify", "Alg-p1-01", "--text", "长" * 12000, sid="s-entry")
+        self.route("notify", "Alg-p1-01", "--text", "短消息：新数据到了", sid="s-entry")
+        _, out = self.prompt("s-alg1", "继续")
+        self.assertIn("全文在 inbox/Alg-p1-01.jsonl", out.get("additionalContext", ""))
+        self.assertLessEqual(len(out.get("additionalContext", "")), 9600)
+        _, out = self.prompt("s-alg1", "继续")
+        self.assertIn("短消息：新数据到了", out.get("additionalContext", ""))
+
+    def test_the_desk_is_filled_in_by_route_claim(self):
+        self.opening("rnd-p2", "RnD-p2-01", "s-rnd2")                      # the hook saw no desktop ID
+        self.assertIsNone(self.pool()["claims"]["RnD-p2-01"]["desk"])
+        self.claim("rnd-p2", "RnD-p2-01", "s-rnd2", desk="d-rnd2")
+        self.assertEqual(self.pool()["claims"]["RnD-p2-01"]["desk"], "d-rnd2")
+        self.assertEqual(self.pool()["pending"], [])
+
+    def test_a_redispatched_item_is_not_owed_by_the_old_session(self):
+        self.route("expect", "Alg-p1-02", "--role", "alg-p1", "--desk", "d-a12", sid="s-alg2")
+        self.claim("alg-p1", "Alg-p1-02", "s-alg12", desk="d-a12")
+        self.prompt("s-alg1", "【派活 #2101】Alg-p2-01 → Alg-p1-01：需求包 x.md")
+        self.prompt("s-alg12", "【派活 #2101】Alg-p2-01 → Alg-p1-02：需求包 x.md")
+        _, out = self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-alg1", "source": "compact"})
+        self.assertIn("未了事项：无", out.get("additionalContext", ""))
+
+    def test_waits_end_when_work_goes_on(self):
+        self.hook("instances.py", {"hook_event_name": "Notification", "session_id": "s-alg2", "notification_type": "permission_prompt"})
+        self.assertEqual(self.session("s-alg2")["status"], "waiting_researcher")
+        self.hook("guard.py", {"hook_event_name": "PreToolUse", "session_id": "s-alg2", "agent_id": "sub", "agent_type": "Explore",
+                               "tool_name": "Bash", "tool_input": {"command": "ls"}})
+        self.assertNotEqual(self.session("s-alg2")["status"], "waiting_researcher")
+        self.hook("instances.py", {"hook_event_name": "Notification", "session_id": "s-alg1", "notification_type": "elicitation_dialog"})
+        self.hook("instances.py", {"hook_event_name": "Notification", "session_id": "s-alg1", "notification_type": "elicitation_complete"})
+        self.assertNotEqual(self.session("s-alg1")["status"], "waiting_researcher")
+
+    def test_recover_lists_background_runs_until_the_next_prompt(self):
+        self.hook("instances.py", {"hook_event_name": "Stop", "session_id": "s-q2", "background_tasks": [{"id": "train"}]})
+        self.hook("instances.py", {"hook_event_name": "SessionEnd", "session_id": "s-q2", "reason": "other"})
+        self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-q2", "source": "resume"})
+        _, text = self.route("pool", "--recover", sid="s-entry")
+        self.assertIn("Quality-p2-01：应用退出前有后台任务在跑", text)
+        self.prompt("s-q2", "继续")
+        _, text = self.route("pool", "--recover", sid="s-entry")
+        self.assertNotIn("Quality-p2-01：应用退出前", text)
+
+    def test_notify_targets_that_nobody_reads_are_refused(self):
+        code, text = self.route("notify", "Alg-p0-2999", "--text", "x", sid="s-entry")
+        self.assertNotEqual(code, 0)
+        self.assertIn("没有记下负责会话", text)
+
+    def test_a_returning_researcher_renews_the_focus_flag(self):
+        self.route("focus", "open", "--topic", "谈规格", sid="s-alg2")
+        path = os.path.join(self.tmp, ".claude", "state", "sessions", "s-alg2.json")
+        with open(path, encoding="utf-8") as f:
+            st = json.load(f)
+        st.update(status="idle", status_at=(datetime.datetime.now().astimezone() - datetime.timedelta(minutes=45)).isoformat())
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(st, f)
+        self.prompt("s-alg2", "我们接着说规格 v3")                        # the researcher, not a message
+        self.assertIn("Alg-p2-01", self.pool()["focus"])
+
+    def test_the_entry_queue_skips_requests_already_sent(self):
+        self.prompt("s-alg2", "【派活 #2301】PMO-p2-01 → Alg-p2-01：跨序列需求 x.md")
+        rows = {"open": [], "cross": [{"work_item_id": "2301", "work_item_status": "待接单", "name": "需求包（Product-p2-01）：要数据"},
+                                      {"work_item_id": "2302", "work_item_status": "待接单", "name": "需求包（Product-p2-01）：要标注"}]}
+        with mock.patch.object(ledger, "Ledger"), \
+                mock.patch.object(ledger, "query", side_effect=lambda lg, name, seq=None, as_json=False: rows[name]):
+            entry = route.queue_rows(self.tmp, json.loads(self.read(".claude/hooks/policy.json")),
+                                     self.pool()["claims"]["PMO-p2-01"], "pmo")
+        self.assertEqual([r["work_item_id"] for r in entry], ["2302"])
+
+    def test_no_refill_rows_at_the_cap(self):
+        policy_path = os.path.join(self.hooks, "policy.json")
+        with open(policy_path, encoding="utf-8") as f:
+            policy = json.load(f)
+        policy["pool"]["max_sessions"] = len(self.pool()["claims"])
+        with open(policy_path, "w", encoding="utf-8") as f:
+            json.dump(policy, f)
+        _, text = self.route("claim", "alg-p2", "--as", "Alg-p2-01", sid="s-alg2")
+        self.assertNotIn("（补位用）", text)
+        self.assertIn("总上限", text)
+
+
+class SecondReviewSetupTest(ProjectCase):
+    """Second review: paths through symlinks, the guard/policy pair, the hard-rule wording (CLI)."""
+
+    def test_a_protected_path_that_is_a_symlink_stays_protected(self):
+        outside_dir = tempfile.mkdtemp(prefix="agent-org-data-")
+        try:
+            os.makedirs(os.path.join(self.tmp, "data"), exist_ok=True)
+            os.symlink(outside_dir, os.path.join(self.tmp, "data", "eval"))
+            _, out = self.guard("alg-p0", "Write", {"file_path": os.path.join(self.tmp, "data", "eval", "test.json")})
+            self.assertEqual(out.get("permissionDecision"), "deny")
+            _, out = self.guard("", "Write", {"file_path": "data/eval/test.json"}, agent_id=None)
+            self.assertEqual(out.get("permissionDecision"), "deny")
+        finally:
+            shutil.rmtree(outside_dir, ignore_errors=True)
+
+    def test_same_version_changes_are_not_held_back(self):
+        with open(os.path.join(self.hooks, "guard.py"), "a", encoding="utf-8") as f:
+            f.write("\n# local change\n")
+        with open(TASK, encoding="utf-8") as f:
+            task = json.load(f)
+        task["protected_paths"].append("data/holdout/**")
+        path = os.path.join(self.tmp, "task2.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(task, f, ensure_ascii=False)
+        plan = setup.build_plan(self.tmp, path, None)
+        acts = {rel: kind for kind, rel, _ in setup.actions_for(self.tmp, plan)}
+        self.assertEqual(acts[".claude/hooks/guard.py"], "new")
+        self.assertEqual(acts[".claude/hooks/policy.json"], "update")
+
+    def test_check_names_a_mismatched_pair(self):
+        path = os.path.join(self.hooks, "policy.json")
+        with open(path, encoding="utf-8") as f:
+            policy = json.load(f)
+        policy["version"] = 3
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(policy, f)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            setup.check(self.tmp)
+        self.assertIn("guard.py 和 policy.json 不配套", out.getvalue())
+
+    def test_hard_rule_wording_says_what_denies_and_what_asks(self):
+        with open(os.path.join(self.tmp, "CLAUDE.md"), encoding="utf-8") as f:
+            claude = f.read()
+        self.assertIn("在任何会话里都直接拒绝", claude)
+        self.assertIn("同时派第二个书记员", claude)
+        self.assertIn("弹窗询问", claude)
+
+    def test_cli_notify_only_to_sessions_that_read_inboxes(self):
+        with self.assertRaises(SystemExit):
+            route.notify(self.spec, self.tmp, "alg-p1", "x")
+        with contextlib.redirect_stdout(io.StringIO()):
+            route.notify(self.spec, self.tmp, "alg-p2", "y")
+
+
+
+class PoolThirdReviewTest(PoolProjectCase):
+    """Fixes from the third, narrow review of 0.5.0."""
+    W = "python3 -I .claude/agent-org/bin/ledger.py register packages/drafts/alg/x.md --apply"
+
+    def setUp(self):
+        super().setUp()
+        self.started_pool()
+
+    def decision(self, sid, command, desk=None, **extra):
+        return self.bash(sid, command, desk=desk, **extra)[1].get("permissionDecision")
+
+    def set_session(self, sid, **fields):
+        path = os.path.join(self.tmp, ".claude", "state", "sessions", sid + ".json")
+        st = self.session(sid)
+        st.update(fields)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(st, f, ensure_ascii=False)
+
+    def ago(self, minutes):
+        return (datetime.datetime.now().astimezone() - datetime.timedelta(minutes=minutes)).isoformat(timespec="seconds")
+
+    def test_quoted_escaped_and_commented_mentions_are_not_run(self):
+        for cmd in ("git commit -m 'docs: use `git worktree add` instead of `git checkout -b`'",
+                    "echo '- never run `git stash` in the shared tree' >> NOTES.md",
+                    "# check before `git checkout`\ngit status",
+                    'echo "later: \\$(git stash)" >> NOTES.md',
+                    "gh pr create --body 'Do not run `git pull` here'",
+                    "rg -n -F '`route.py release`' docs/ CLAUDE.md",
+                    "# then ask the researcher to run `route.py release Alg-p0-01`\npython3 -I %s pool" % self.R):
+            for sid in ("s-alg1", "s-researcher"):
+                self.assertIsNone(self.decision(sid, cmd), (sid, cmd))
+        self.assertEqual(self.decision("s-alg1", 'git commit -m "$(git stash)"'), "deny")
+        self.assertEqual(self.decision("s-alg1", "echo \"`git stash`\""), "deny")
+
+    def test_more_ways_to_run_a_command(self):
+        for cmd in ("find . -maxdepth 0 -exec bash -c 'git stash' \\;",
+                    "find . -maxdepth 0 -exec env git stash \\;",
+                    "find /usr/bin -maxdepth 1 -name git -exec {} stash \\;",
+                    "printf 'git stash\\n' > /tmp/agent-org-test-sw.sh && . /tmp/agent-org-test-sw.sh",
+                    "cat > /tmp/agent-org-test-sw2.sh <<'EOF'\ngit checkout main\nEOF\nbash /tmp/agent-org-test-sw2.sh",
+                    "cat <<'EOF' | bash\ngit stash\nEOF",
+                    "(cd /tmp && true); git checkout main",
+                    "cd /tmp && cd - && git checkout main",
+                    "C='git stash'; bash -c \"$C\"",
+                    "git --git-dir=/tmp/other/.git checkout -f main"):
+            self.assertEqual(self.decision("s-alg1", cmd), "deny", cmd)
+        for cmd in ("find . -maxdepth 0 -exec sh -c 'python3 -I %s release PMO-p0-01' \\;" % self.R,
+                    "python3 -m cProfile -o /dev/null %s release PMO-p0-01" % self.R,
+                    "X=%s; python3 -I $X pool; python3 -I $X release Alg-p0-01" % self.R):
+            self.assertEqual(self.decision("s-researcher", cmd), "deny", cmd)
+
+    def test_git_in_other_trees_is_fine(self):
+        for cmd in ("cd ~/other-repo && git pull", "git -C ~/other-repo checkout v1.2",
+                    "cd /tmp/ref && out=$(git pull 2>&1); echo \"$out\""):
+            self.assertIsNone(self.decision("s-alg1", cmd), cmd)
+        wt = os.path.join(self.tmp, ".claude", "worktrees", "feat")
+        os.makedirs(wt)
+        with open(os.path.join(wt, ".git"), "w", encoding="utf-8") as f:
+            f.write("gitdir: /somewhere/project/.git/worktrees/feat\n")
+        self.assertIsNone(self.decision("s-alg1", "git -C .claude/worktrees/feat checkout -b feat3"))
+        self.assertIsNone(self.decision("s-alg1", "git stash", cwd=wt))
+        os.makedirs(os.path.join(self.tmp, "repo", ".git"))        # a clone inside the project is still shared
+        self.assertEqual(self.decision("s-alg1", "git -C repo checkout other"), "deny")
+
+    def test_a_repeated_option_is_refused(self):
+        cmd = "python3 -I %s claim pmo-scribe --desk= --desk d-scribe --wait 0" % self.R
+        self.assertEqual(self.decision("s-term", cmd), "deny")
+        cmd = "python3 -I %s expect Alg-p0-02 --role alg-p0 --role pmo-scribe --desk d-x" % self.R
+        self.assertEqual(self.decision("s-alg2", cmd), "deny")
+
+    def test_identity_variables_in_other_forms(self):
+        tail = "python3 -I %s notify PMO-p2-01 --text x" % self.R
+        for prefix in ("unset -v CLAUDE_CODE_SESSION_ID CLAUDE_CODE_HOST_SESSION_ID; ", 'env -i PATH="$PATH" ',
+                       'env -u "CLAUDE_CODE_SESSION_ID" -u "CLAUDE_CODE_HOST_SESSION_ID" ',
+                       "unset CLAUDE_CODE_{,HOST_}SESSION_ID; ", "export -n CLAUDE_CODE_SESSION_ID CLAUDE_CODE_HOST_SESSION_ID; "):
+            self.assertEqual(self.decision("s-alg1", prefix + tail), "deny", prefix)
+        for cmd in ('echo "CLAUDE_CODE_HOST_SESSION_ID=$CLAUDE_CODE_HOST_SESSION_ID"', "env | grep CLAUDE_CODE_SESSION_ID=",
+                    "env -i make test"):
+            self.assertIsNone(self.decision("s-alg1", cmd), cmd)
+
+    def test_who_a_request_is_from(self):
+        self.route("refill", "alg-p1")                                    # a plain terminal
+        self.route("refill", "alg-p0", sid="s-nested", desk="d-s-alg1")   # a process started inside Alg-p1-01
+        rows = [json.loads(line) for line in self.read("inbox/PMO-p2-01.jsonl").splitlines() if line.strip()]
+        self.assertEqual([r["from"] for r in rows if "补位请求" in r.get("text", "")],
+                         ["终端里的进程（没有会话 ID）", "和已认领会话共用桌面会话 ID 的进程"])
+
+    def test_settings_hook_the_terminal_panel(self):
+        hooks = json.loads(self.read(".claude/settings.json"))["hooks"]
+        for event in ("PreToolUse", "PostToolUse", "PostToolUseFailure"):
+            regex = [g["matcher"] for g in hooks[event] if not re.fullmatch(r"[A-Za-z0-9_|, -]+", g["matcher"])]
+            self.assertTrue(any(re.search(m, "mcp__terminal__run_in_terminal") for m in regex), event)
+            self.assertFalse(any(re.search(m, "Bash") or re.search(m, "Task") for m in regex), event)
+
+    def test_a_link_into_an_owned_path_keeps_its_owner(self):
+        os.symlink("../.claude/hooks", os.path.join(self.tmp, "org", "hk"))
+        _, out = self.guard("s-alg1", "Edit", {"file_path": os.path.join(self.tmp, "org", "hk", "guard.py")})
+        self.assertEqual(out.get("permissionDecision"), "deny")
+        spec_md = os.path.join(self.tmp, "spec", "spec.md")
+        if os.path.lexists(spec_md):
+            os.remove(spec_md)
+        os.symlink("task.json", spec_md)
+        _, out = self.guard("s-alg2", "Edit", {"file_path": spec_md})
+        self.assertEqual(out.get("permissionDecision"), "deny")
+        _, out = self.guard("s-alg1", "Edit", {"file_path": os.path.join(self.tmp, "org", "notes.md")})
+        self.assertIsNone(out.get("permissionDecision"))
+        _, out = self.guard("s-alg2", "Edit", {"file_path": os.path.join(self.tmp, ".claude", "agent-memory", "alg-p2", "MEMORY.md")})
+        self.assertIsNone(out.get("permissionDecision"))
+
+    def test_a_subagent_call_leaves_the_parent_prompt_open(self):
+        perm = {"hook_event_name": "PermissionRequest", "session_id": "s-alg1", "tool_name": "Bash", "tool_input": {"command": "x"}}
+        self.hook("instances.py", perm)
+        self.bash("s-alg1", "ls", agent_id="bg-1")
+        self.assertEqual(self.session("s-alg1")["status"], "waiting_researcher")
+        self.hook("audit.py", {"hook_event_name": "PostToolUse", "tool_name": "Bash", "session_id": "s-alg1",
+                               "tool_input": {"command": "x"}, "tool_response": {"stdout": "", "stderr": ""}})
+        self.assertEqual(self.session("s-alg1")["status"], "busy")
+        self.hook("instances.py", dict(perm, agent_id="a-A"))          # two subagents: A asks, B goes on
+        self.hook("instances.py", {"hook_event_name": "Notification", "session_id": "s-alg1",
+                                   "notification_type": "permission_prompt", "message": "x"})
+        self.bash("s-alg1", "ls", agent_id="a-B")
+        self.assertEqual(self.session("s-alg1")["status"], "waiting_researcher")
+        self.bash("s-alg1", "ls", agent_id="a-A")
+        self.assertEqual(self.session("s-alg1")["status"], "busy")
+
+    def test_clear_keeps_a_claim_made_in_a_terminal(self):
+        self.route("expect", "Quality-p0-01", "--role", "quality-p0", "--session", "s-t", sid="s-q2")
+        self.claim("quality-p0", "Quality-p0-01", "s-t")
+        self.assertIsNone(self.pool()["claims"]["Quality-p0-01"].get("desk"))
+        self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-t", "source": "resume"}, desk="d-t")
+        self.assertEqual(self.pool()["claims"]["Quality-p0-01"]["desk"], "d-t")
+        self.hook("instances.py", {"hook_event_name": "SessionEnd", "session_id": "s-t", "reason": "clear"})
+        self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-t2", "source": "clear"}, desk="d-t")
+        self.assertEqual(self.pool()["claims"]["Quality-p0-01"]["session_id"], "s-t2")
+        # never seen with its desktop ID: paired by time
+        self.route("expect", "PMO-p1-01", "--role", "pmo-router", "--session", "s-r", sid="s-entry")
+        self.claim("pmo-router", "PMO-p1-01", "s-r")
+        self.hook("instances.py", {"hook_event_name": "SessionEnd", "session_id": "s-r", "reason": "clear"})
+        self.hook("instances.py", {"hook_event_name": "SessionStart", "session_id": "s-r2", "source": "clear"}, desk="d-r")
+        claim = self.pool()["claims"]["PMO-p1-01"]
+        self.assertEqual((claim["session_id"], claim["desk"]), ("s-r2", "d-r"))
+
+    def test_focus_notes_after_a_message_and_a_report(self):
+        self.route("focus", "open", "--topic", "谈规格 v3", sid="s-alg2")
+        self.set_session("s-alg2", status="idle", status_at=self.ago(45), last_tool_at=self.ago(45))
+        self.prompt("s-alg2", "【派活 #2301】PMO-p2-01 → Alg-p2-01：需求包 packages/drafts/alg/x.md")
+        self.assertNotIn("Alg-p2-01", self.pool()["focus"])
+        _, out = self.prompt("s-alg2", "我回来了，接着说规格 v3")
+        self.assertIn("已因空闲 30 分钟失效", out.get("additionalContext", ""))
+        self.route("focus", "open", "--topic", "谈规格 v4", sid="s-alg2")
+        self.set_session("s-alg2", status="idle_bg", status_at=self.ago(50), last_tool_at=self.ago(50))
+        _, out = self.prompt("s-alg2", "<task-notification>\n<status>completed</status>\n</task-notification>")
+        self.assertNotIn("Alg-p2-01", self.pool()["focus"])            # a background report is not the researcher
+        self.assertNotIn("失效", out.get("additionalContext", ""))
+        _, out = self.prompt("s-alg2", "接着说")
+        self.assertIn("已因空闲 30 分钟失效", out.get("additionalContext", ""))
+
+    def test_one_meaning_of_the_notice(self):
+        claude = self.read("CLAUDE.md")
+        self.assertIn("也是消息，会叫起对方的下一轮", claude)
+        self.assertNotIn("留在收件箱，不发消息", claude)
+        path = os.path.join(self.tmp, "packages", "drafts", "quality", "v.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(example_blocks()[5])
+        out = route.classify_draft(self.spec, self.tmp, path)
+        self.assertTrue(any("给送审方" in s and "【通知" in s for s in out.get("steps", [])), out)
+        p0 = self.read(".claude/agents/alg-p0.md")
+        self.assertEqual(p0.count("执行结果先送审，拿到验收包再交上一级"), 1)
+        self.assertNotIn("。；", p0)
+        self.assertIn("送审包直接给入口", p0)
+        self.assertIn("质量序列的会话例外", claude)
+        self.assertIn("其余序列中任一个", self.read(".claude/agents/pmo-p2.md"))
+
+
+class ThirdReviewSetupTest(ProjectCase):
+    """Third review: guard/policy pairs and mode switches during an upgrade (CLI project)."""
+
+    def set_policy(self, **fields):
+        path = os.path.join(self.hooks, "policy.json")
+        with open(path, encoding="utf-8") as f:
+            policy = json.load(f)
+        for k, v in fields.items():
+            if v is None:
+                policy.pop(k, None)
+            else:
+                policy[k] = v
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(policy, f, ensure_ascii=False)
+
+    def test_a_mode_switch_waits_for_the_pair(self):
+        with open(os.path.join(self.hooks, "guard.py"), "a", encoding="utf-8") as f:
+            f.write("\n# local change\n")
+        self.set_policy(version=3, mode=None)                       # as left by an older plugin
+        with open(TASK, encoding="utf-8") as f:
+            task = json.load(f)
+        task.update(mode="pool", pool={"p1": 1, "p0": 1, "later": [], "max_sessions": 30})
+        path = os.path.join(self.tmp, "task-pool.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(task, f, ensure_ascii=False)
+        with contextlib.redirect_stdout(io.StringIO()):
+            plan = setup.build_plan(self.tmp, path, None)
+        acts = {rel: kind for kind, rel, _ in setup.actions_for(self.tmp, plan)}
+        self.assertEqual(acts[".claude/settings.json"], "held")
+        self.assertEqual(acts["CLAUDE.md"], "held")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            setup.apply_plan(self.tmp, plan, setup.actions_for(self.tmp, plan))
+            setup.report(self.tmp, plan, setup.actions_for(self.tmp, plan), True)
+            setup.check(self.tmp)
+        self.assertIn("要换运行模式", out.getvalue())
+        self.assertIn("待合并", out.getvalue())
+        self.assertTrue(os.path.isfile(os.path.join(self.hooks, "policy.json.new")))
+        with open(os.path.join(self.tmp, ".claude", "settings.json"), encoding="utf-8") as f:
+            self.assertIn("agent", json.load(f))                    # still the CLI settings
+
+    def test_pair_messages_say_which_way(self):
+        path = os.path.join(self.hooks, "guard.py")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text.replace("POLICY_VERSION = 4\n", ""))   # a guard from before policy versions
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            setup.check(self.tmp)
+        self.assertIn("旧 guard 在按新规则跑", out.getvalue())
+        self.assertNotIn("改过：.claude/hooks/policy.json", out.getvalue())
+
+    def test_pool_health_on_an_old_policy(self):
+        problems, _ = setup.pool_health(self.tmp, {"mode": "pool"})
+        self.assertTrue(problems and "旧版或 CLI 模式" in problems[0])
 
 
 if __name__ == "__main__":

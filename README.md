@@ -1,6 +1,6 @@
 # Super Org Agent
 
-Claude Code 插件：把一个研究项目组织成七个序列（产品、算法、工程、基础设施、质量、项目管理、外联）、三个职级（+0 到 +2）的子智能体，研究员是 +3。项目管理 +2 是研究员唯一的入口；交接写成五类任务包（需求包、交付包、送审包、验收包、决策包）；任务账本在飞书项目，任务包在飞书文档，书记员是唯一的写入方。
+Claude Code 插件：把一个研究项目组织成七个序列（产品、算法、工程、基础设施、质量、项目管理、外联）、三个职级（+0 到 +2）的子智能体或桌面会话，研究员是 +3。项目管理 +2 是研究员平时的入口，特殊情况下研究员也直接委托其余六个序列的 +2；交接写成五类任务包（需求包、交付包、送审包、验收包、决策包）；任务账本在飞书项目，任务包在飞书文档，书记员是唯一的写入方。
 
 使用说明见 [docs/使用说明.md](docs/使用说明.md)。
 
@@ -23,7 +23,7 @@ claude plugin install agent-org@agent-org
 plugins/agent-org/
 ├─ .claude-plugin/plugin.json
 ├─ orgspec/                          组织规则（rules.json，英文标识）和术语表（terms.zh.json）
-├─ scripts/                          orgspec.py 读规则和检查包；setup.py 初始化；ledger.py 台账；route.py 路由、收件箱、聚焦会话
+├─ scripts/                          orgspec.py 读规则和检查包；setup.py 初始化和开池清单；ledger.py 台账；route.py 路由、收件箱、聚焦会话和会话池；pool.py 认领和会话状态
 ├─ scaffold/                         初始化时生成项目文件用的模板和 hook
 ├─ skills/
 │  ├─ setup/                         预检、初始化、搭模板空间、绑定飞书空间
@@ -50,6 +50,8 @@ python3 -I -B plugins/agent-org/tests/test_plugin.py
 ```
 
 ## 状态
+
+0.5.0：加了会话池模式（任务文件写 `"mode": "pool"`）。每个角色是研究员在桌面应用侧栏里看得见的一个会话：研究员新建七个 +2 会话并粘贴开局句，hook 按开局句认领，各 +2 开出本序列的 +1、+0 并预登记，子会话认领后由 hook 注入角色说明；派活、交回、登记都是会话之间带抬头的消息，`route.py pool` 找空闲的会话，`--watch` 看进度，`--recover` 在重启后续上。hook 只拦会损坏数据的事（书记员独写飞书、评测协议只读、high-risk 命令、`.claude/` 配置和认领表、派发带 name、共享目录里切分支），其余派发规则改成规范加审计，两种模式都一样；`ledger.py --apply` 加了文件锁。`setup.py pool` 打印开池清单，`check` 报认领表的问题。默认仍是 CLI 模式。
 
 0.4.0：初始化把飞书文档这一边也算进来。setup 技能第四步加了“飞书文档”一节：研究员确认后建知识空间，再用 `ledger.py ensure-node all` 一次建齐节点骨架；`setup.py check` 会报项目空间没绑定、没有知识空间或节点不齐，交给用户之前的检查也加了这一项。
 

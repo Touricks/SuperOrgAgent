@@ -29,15 +29,20 @@ recorded from a real space (tests/fixtures/feishu/). Every type and field is fou
 through feishu/ids.json, which `setup.py feishu --live --apply` binds to the project's
 own space; the rules hold names and identifiers only, never a space's keys.
 --offline prints every command without calling Feishu (used by tests).
+Every --apply holds an exclusive lock on feishu/.ledger.lock (waiting up to 60 seconds),
+so two writers never interleave; ids.json and receipts are replaced atomically.
 Python 3.9 standard library only.
 """
 import argparse
+import contextlib
 import datetime
+import fcntl
 import json
 import os
 import re
 import subprocess
 import sys
+import time
 import xml.etree.ElementTree as ET
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -85,6 +90,46 @@ def load_json(path, default=None):
             return json.load(f)
     except (OSError, ValueError):
         return default
+
+
+def save_json(path, obj):
+    """Write JSON through a temporary file and os.replace, so a reader never sees half a file."""
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+
+
+LOCK_WAIT = 60
+
+
+@contextlib.contextmanager
+def write_lock(root, wait=None):
+    """Hold feishu/.ledger.lock for one --apply run. The file names the holder (session and pid)."""
+    wait = LOCK_WAIT if wait is None else wait
+    path = os.path.join(root, "feishu", ".ledger.lock")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a+", encoding="utf-8") as f:
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    f.seek(0)
+                    holder = f.read().strip() or "未知"
+                    raise LedgerError("台账正在被别的写入占用（%s），等了 %d 秒还没放开；等它写完再试，不要删锁文件" % (holder, wait))
+                time.sleep(0.5)
+        try:
+            f.seek(0)
+            f.truncate()
+            f.write("会话 %s，pid %d，%s 开始" % (os.environ.get("CLAUDE_CODE_SESSION_ID") or "终端", os.getpid(), now()))
+            f.flush()
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def other_space(task, meegle):
@@ -486,9 +531,7 @@ class Ledger:
             ids = load_json(path, {})
             if isinstance(ids, dict) and not (ids.get("wiki") or {}).get("tenant_domain"):
                 ids.setdefault("wiki", {})["tenant_domain"] = self.tenant
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump(ids, f, ensure_ascii=False, indent=2)
-                    f.write("\n")
+                save_json(path, ids)
 
     def wiki_url(self, node, near=None):
         m = re.match(r"https?://([^/]+)/", near or "")
@@ -722,8 +765,7 @@ def save_receipt(lg, path, item_id, status, **extra):
         rec = {}
     rec.update({"draft": rel, "work_item_id": item_id, "status": status, "updated_at": now()})
     rec.update({k: v for k, v in extra.items() if v is not None})
-    with open(target, "w", encoding="utf-8") as f:
-        json.dump(rec, f, ensure_ascii=False, indent=2)
+    save_json(target, rec)
 
 
 def check_receipt(lg, path, resume, again=""):
@@ -818,9 +860,7 @@ def write_project_id(lg, item_id):
     if (ids.get("meegle") or {}).get("project_item_id") == item_id:
         return
     ids.setdefault("meegle", {})["project_item_id"] = item_id
-    with open(m, "w", encoding="utf-8") as f:
-        json.dump(ids, f, ensure_ascii=False, indent=2)
-        f.write("\n")
+    save_json(m, ids)
 
 
 def work_item_type(draft):
@@ -1154,8 +1194,7 @@ def reply(lg, path, doc=None):
             rec.update(draft=os.path.relpath(path, lg.root), parent=parent_id, updated_at=now())
             rec.setdefault("status", "created")
             os.makedirs(sent_dir(lg), exist_ok=True)
-            with open(rpath, "w", encoding="utf-8") as f:
-                json.dump(rec, f, ensure_ascii=False, indent=2)
+            save_json(rpath, rec)
 
     def create():
         return lg.create_doc(node, title, d.body_without_title(), created=lambda x: remember(docx=x, doc_unknown=False))
@@ -1508,9 +1547,7 @@ def ensure_node(lg, key):
         path = os.path.join(lg.root, "feishu", "ids.json")
         ids = load_json(path, {})
         ids.setdefault("wiki", {}).setdefault("nodes", {})[key] = record
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(ids, f, ensure_ascii=False, indent=2)
-            f.write("\n")
+        save_json(path, ids)
         lg.nodes[key] = record                         # a child created next in the same run finds it
         if out is not None:
             print("已建节点 %s：%s，写进 feishu/ids.json。" % (key, record["node_token"]))
@@ -1748,47 +1785,53 @@ def main(argv=None):
         print("出错：spec/task.json 里的飞书项目空间是“%s”，绑定的是“%s”。重跑 setup.py feishu --target <项目目录> --live 核对，"
               "再加 --apply；在这以前台账脚本不读也不写飞书。" % (moved, m["space_name"]))
         return 1
+    lock = write_lock(lg.root) if mode == "apply" else contextlib.nullcontext()
     try:
-        if args.cmd == "get":
-            if args.raw:
-                print(json.dumps(lg.get(args.id, ["_all"]), ensure_ascii=False, indent=2))
-            else:
-                print(digest(lg, args.id) or "")
-        elif args.cmd == "query":
-            query(lg, args.name, args.sequence, args.json)
-        elif args.cmd == "mql":
-            print("\n".join(mql_text(lg, args.name, args.sequence)))
-        elif args.cmd == "trace":
-            trace(lg, args.id)
-        elif args.cmd == "status":
-            status(lg, args.id)
-        elif args.cmd == "register":
-            register(lg, args.draft, args.source, pairs=args.set, resume=args.resume, existing=args.existing, doc=args.doc)
-        elif args.cmd == "reply":
-            reply(lg, args.draft, args.doc)
-        elif args.cmd == "transition":
-            transition(lg, args.id, args.state, args.set, args.type)
-        elif args.cmd == "update":
-            update(lg, args.id, args.set, args.type)
-        elif args.cmd == "comment":
-            comment(lg, args.id, args.text)
-        elif args.cmd == "status-block":
-            status_block(lg, args.id, args.file)
-        elif args.cmd == "append":
-            append(lg, args.id, args.file)
-        elif args.cmd == "archive":
-            archive(lg, args.id)
-        elif args.cmd == "ensure-node":
-            if args.key == "all":
-                ensure_all_nodes(lg)
-            else:
-                ensure_node(lg, args.key)
+        with lock:
+            run_command(lg, args)
     except (LedgerError, orgspec.OrgSpecError, ET.ParseError, OSError) as e:
         print("出错：%s" % e)
         return 1
     if mode == "preview" and lg.planned:
         print("这是预览，没有写飞书。核对后加 --apply 执行。")
     return 0
+
+
+def run_command(lg, args):
+    if args.cmd == "get":
+        if args.raw:
+            print(json.dumps(lg.get(args.id, ["_all"]), ensure_ascii=False, indent=2))
+        else:
+            print(digest(lg, args.id) or "")
+    elif args.cmd == "query":
+        query(lg, args.name, args.sequence, args.json)
+    elif args.cmd == "mql":
+        print("\n".join(mql_text(lg, args.name, args.sequence)))
+    elif args.cmd == "trace":
+        trace(lg, args.id)
+    elif args.cmd == "status":
+        status(lg, args.id)
+    elif args.cmd == "register":
+        register(lg, args.draft, args.source, pairs=args.set, resume=args.resume, existing=args.existing, doc=args.doc)
+    elif args.cmd == "reply":
+        reply(lg, args.draft, args.doc)
+    elif args.cmd == "transition":
+        transition(lg, args.id, args.state, args.set, args.type)
+    elif args.cmd == "update":
+        update(lg, args.id, args.set, args.type)
+    elif args.cmd == "comment":
+        comment(lg, args.id, args.text)
+    elif args.cmd == "status-block":
+        status_block(lg, args.id, args.file)
+    elif args.cmd == "append":
+        append(lg, args.id, args.file)
+    elif args.cmd == "archive":
+        archive(lg, args.id)
+    elif args.cmd == "ensure-node":
+        if args.key == "all":
+            ensure_all_nodes(lg)
+        else:
+            ensure_node(lg, args.key)
 
 
 if __name__ == "__main__":
