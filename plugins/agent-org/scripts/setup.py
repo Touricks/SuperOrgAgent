@@ -1232,7 +1232,7 @@ def migration_md(spec, ids, fd, found_views=None, problems=None):
     lines += ["## 读回", "", orgspec.md_table(["项", "现状", "怎么补"], readback), ""]
     lines += ["## 网页上还要做的事", "",
               "下面几项脚本核对不了，在网页上做（可以由会话代点），做完自己勾掉：", "",
-              bullets(["六种类型的详情页布局：默认“基本信息”里只有“名称”，把主文档、来源工作项、发出方、负责会话、截止时间等字段放进去，人在页面上才看得到。在模板空间里做，复制时一起带过来。",
+              bullets(["六种类型的详情页布局：默认“基本信息”里只有“名称”，照搭建手册（references/build-space.md）第 8 步把字段放进去，人在页面上才看得到。在模板空间里做，复制时一起带过来。",
                        "项目详情页加一个标签页，名为“%s”，放一个“工作项视图”控件，列出这个项目下的%s。也在模板空间里做。" % (spec.term("wi", "same_seq"), spec.term("wi", "same_seq")),
                        "知识库里给人看的参考（可选）：五份包模板（源文件在 `.claude/agent-org/templates/`）和字段字典（`feishu/field-dictionary.md`）。插件只读本地副本，放进知识库只是方便人翻看。"]), ""]
     return "\n".join(lines)
