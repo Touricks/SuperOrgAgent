@@ -25,7 +25,7 @@ claude plugin install agent-org@agent-org
 .agents/plugins/marketplace.json    Codex 本地市场（agent-org-codex）
 plugins/agent-org/
 ├─ .claude-plugin/plugin.json
-├─ .codex-plugin/plugin.json         Codex 0.5.1-codex.2
+├─ .codex-plugin/plugin.json         Codex 0.5.1-codex.3
 ├─ orgspec/                          组织规则（rules.json，英文标识）和术语表（terms.zh.json）
 ├─ scripts/                          orgspec.py 读规则和检查包；setup.py 初始化和开池清单；ledger.py 台账；route.py 路由、收件箱、聚焦会话和会话池；pool.py 认领和会话状态
 ├─ scaffold/                         初始化时生成项目文件用的模板和 hook
@@ -58,9 +58,11 @@ python3 -I -B plugins/agent-org/tests/test_initialization.py
 
 ## 状态
 
+0.5.1-codex.3：会话标题缩短为 `[项目名] <池位名>`，例如 `[Thesis-Phase1] RnD-p0-01`，移除中文序列名、重复职级和“池位”等后缀。角色绑定和 Claude 命名逻辑保持不变；已有聊天由负责项目初始化的会话按新计划更新标题。
+
 0.5.1-codex.2：修复实测中的原生 apply_patch 误拦截、消息收到回执、开工状态顺序、任务写入范围及文档标题问题。角色聊天保留在所属项目，八个重点入口写入 `org/会话入口.md`，不再自动全局置顶。模板新增公开条件视图后的复制实测未带出自定义视图，因此初始化不创建、不检查视图，禁止用 computer-use 配置视图。新增首次配置 300 秒计时，字段读取限量并发、知识节点按父节点复用列表。修复与后续独立实测见 [Codex 实测修复记录](docs/Codex实测修复.md)。
 
-独立实测已完成三处初始化与最小立项回读。首次从空目录开始，303.27 秒时仍未就绪；用户信任 Hooks 后，复用空间和 21 个角色会话的补齐测试耗时 291.15 秒，通过必需配置检查。首次五分钟目标和立项正文占位文字仍列为后续问题。当前按 0.5.1-codex.2 交接基线保留，Claude 侧流程调整见 [Claude 适配交接](docs/Claude适配交接.md)。
+0.5.1-codex.2 的独立实测已完成三处初始化与最小立项回读。首次从空目录开始，303.27 秒时仍未就绪；用户信任 Hooks 后，复用空间和 21 个角色会话的补齐测试耗时 291.15 秒，通过必需配置检查。首次五分钟目标和立项正文占位文字仍列为后续问题。该版本的实测基线保留，Claude 侧流程调整见 [Claude 适配交接](docs/Claude适配交接.md)。
 
 0.5.1-codex.1：首个 Codex Desktop 适配版。`runtime: codex`、`mode: pool` 生成 `.agent-org/`、项目 AGENTS.md 和 `.codex/hooks.json`，长期角色绑定原生会话 ID。创建预约、消息回执、聚焦与替换保留在本地；台账复用飞书模板、绑定、锁和登记回执。此版的全局置顶与 UserPromptSubmit 验收要求已由 codex.2 替代。
 

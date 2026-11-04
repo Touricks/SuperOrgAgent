@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import shlex
 
-VERSION = "0.5.1-codex.2"
+VERSION = "0.5.1-codex.3"
 PRIORITY_ROLES = ("pmo-p2", "pmo-router", "product-p2", "alg-p2", "rnd-p2",
              "infra-p2", "quality-p2", "liaison-p2")
 EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "Stop", "Interrupt", "SessionEnd")
@@ -62,7 +62,7 @@ def adapt(base, original, target, spec, task, policy, seqs):
         for item in [top] + top["children"]:
             role = item["role"]
             slots.append({"name": item["name"], "role": role,
-                          "title": "[%s] %s" % (task["name"], item["title"]),
+                          "title": "[%s] %s" % (task["name"], item["name"]),
                           "model": item["model"], "pin": False,
                           "priority": PRIORITY_ROLES.index(role) + 1 if role in PRIORITY_ROLES else None})
     # PMO +1 and the sole writer must exist even when PMO is in the delayed list.
