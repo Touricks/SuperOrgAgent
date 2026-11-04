@@ -274,9 +274,15 @@ def mark_claimed(root, sid, claim):
         pass
 
 
+def files_in(folder, pattern):
+    """Paths in folder whose names match the glob pattern, sorted. The folder is taken literally:
+    a project path can hold glob characters, as in Phase1[Current]."""
+    return sorted(glob.glob(os.path.join(glob.escape(folder), pattern)))
+
+
 def all_sessions(root):
     out = {}
-    for path in glob.glob(os.path.join(state_dir(root), "sessions", "*.json")):
+    for path in files_in(os.path.join(state_dir(root), "sessions"), "*.json"):
         try:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
@@ -698,8 +704,10 @@ def kind_allowed(policy, kind, sender, receiver):
 
 
 def receipt_exists(root, item_id):
-    return bool(item_id) and bool(glob.glob(os.path.join(root, "packages", "sent", "%s.json" % item_id))
-                                  or glob.glob(os.path.join(root, "packages", "sent", "%s-*.json" % item_id)))
+    if not item_id:
+        return False
+    sent, key = os.path.join(root, "packages", "sent"), glob.escape(str(item_id))
+    return bool(files_in(sent, key + ".json") or files_in(sent, key + "-*.json"))
 
 
 def receive_checks(policy, root, pool, msg, me):

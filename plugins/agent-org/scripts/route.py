@@ -25,7 +25,6 @@ import argparse
 import contextlib
 import datetime
 import fcntl
-import glob
 import io
 import json
 import os
@@ -761,7 +760,7 @@ def recover_cmd(root, policy):
     word = (policy.get("msg") or {}).get("resume", "继续")
     print("恢复清单：")
     unfinished, replies = [], []
-    for path in sorted(glob.glob(os.path.join(root, "packages", "sent", "*.json"))):
+    for path in pool.files_in(os.path.join(root, "packages", "sent"), "*.json"):
         rec = load_json(path, {}) or {}
         if isinstance(rec, dict) and rec.get("status") not in (None, "registered", "replied"):
             if os.path.basename(path).startswith("reply-"):

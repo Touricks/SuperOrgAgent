@@ -18,6 +18,8 @@ from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPO = os.path.dirname(os.path.dirname(ROOT))
+if not os.path.isfile(os.path.join(REPO, ".claude-plugin", "marketplace.json")):
+    REPO = ROOT              # an installed copy (plugins/cache/<marketplace>/<plugin>/<version>): only the plugin
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import orgspec  # noqa: E402
 import setup  # noqa: E402
@@ -920,6 +922,7 @@ class ThirdRoundTest(ProjectCase):
         sys.path.insert(0, self.hooks)
         import importlib
         guard = importlib.import_module("guard")
+        guard.fc.TRUSTED = guard.trusted_scripts(self.tmp)       # as evaluate() does
         reads = [
             "python3 -I .claude/agent-org/bin/ledger.py query open",
             "python3 -I .claude/agent-org/bin/ledger.py --offline get 1",
@@ -950,9 +953,9 @@ class ThirdRoundTest(ProjectCase):
             "python3 -I .claude/agent-org/bin/ledger.py query open | head -5 && python3 .claude/agent-org/bin/ledger.py archive 3",
         ]
         for cmd in reads:
-            self.assertIsNone(guard.ledger_write(cmd), cmd)
+            self.assertIsNone(guard.ledger_write(cmd, self.tmp), cmd)
         for cmd in writes:
-            self.assertTrue(guard.ledger_write(cmd), cmd)
+            self.assertTrue(guard.ledger_write(cmd, self.tmp), cmd)
 
     def test_role_check_reads_the_current_operator(self):
         added = self.stub("apply", [(("user", "me"), {"user_key": "u_researcher"}), (("workitem", "get"), with_operator(None))])
@@ -1231,7 +1234,9 @@ class FourthRoundTest(ProjectCase):
     def guard_module(self):
         sys.path.insert(0, self.hooks)
         import importlib
-        return importlib.import_module("guard")
+        guard = importlib.import_module("guard")
+        guard.fc.TRUSTED = guard.trusted_scripts(self.tmp)       # as evaluate() does
+        return guard
 
     def test_guard_shell_forms(self):
         guard = self.guard_module()
@@ -1251,9 +1256,9 @@ class FourthRoundTest(ProjectCase):
                   f"python3 - <<'EOF'\nimport subprocess\nsubprocess.run(['python3', '{L}', 'transition', '1', 'x'])\nEOF",
                   f"sudo -u me python3 {L} archive 1", f"chrt -r 1 python3 {L} update 1"]
         for cmd in reads:
-            self.assertIsNone(guard.ledger_write(cmd), cmd)
+            self.assertIsNone(guard.ledger_write(cmd, self.tmp), cmd)
         for cmd in writes:
-            self.assertTrue(guard.ledger_write(cmd), cmd)
+            self.assertTrue(guard.ledger_write(cmd, self.tmp), cmd)
 
     def test_append_from_a_file_redirect_is_explained(self):
         cmd = "lark-cli docs +update --doc https://x.feishu.cn/wiki/A --command append --doc-format markdown --content - --as user < rec.md"
@@ -2920,9 +2925,10 @@ class PoolProjectCase(unittest.TestCase):
     POOL = {"p1": 1, "p0": 1, "later": [], "max_sessions": 30}
     L = ".claude/agent-org/bin/ledger.py"
     R = ".claude/agent-org/bin/route.py"
+    PREFIX = "agent-org-pool-"
 
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="agent-org-pool-")
+        self.tmp = tempfile.mkdtemp(prefix=self.PREFIX)
         self.spec = orgspec.OrgSpec()
         with open(TASK, encoding="utf-8") as f:
             task = json.load(f)
@@ -4494,6 +4500,39 @@ class ThirdReviewSetupTest(ProjectCase):
     def test_pool_health_on_an_old_policy(self):
         problems, _ = setup.pool_health(self.tmp, {"mode": "pool"})
         self.assertTrue(problems and "旧版或 CLI 模式" in problems[0])
+
+
+
+class BracketPathTest(PoolProjectCase):
+    """A project path with glob characters, like Phase1[Current], is read literally."""
+    PREFIX = "agent-org-pool-Phase1[Current]-"
+
+    def setUp(self):
+        super().setUp()
+        self.started_pool()
+
+    def test_pool_views_read_sessions_and_receipts(self):
+        self.assertIn("[", self.tmp)
+        self.hook("instances.py", {"hook_event_name": "Stop", "session_id": "s-alg1", "last_assistant_message": "好"})
+        _, out = self.route("pool", "--role", "alg-p1", sid="s-alg2")
+        self.assertIn("Alg-p1-01（alg-p1）空闲", out)
+        self.assertIn("建议：发给 Alg-p1-01", out)
+        sent = os.path.join(self.tmp, "packages", "sent")
+        with open(os.path.join(sent, "2101.json"), "w", encoding="utf-8") as f:
+            json.dump({"work_item_id": "2101", "draft": "packages/drafts/alg/a.md", "status": "registered"}, f)
+        with open(os.path.join(sent, "2102.json"), "w", encoding="utf-8") as f:
+            json.dump({"work_item_id": "2102", "draft": "packages/drafts/alg/b.md", "status": "creating"}, f)
+        import pool
+        self.assertTrue(pool.receipt_exists(self.tmp, "2101"))
+        self.assertFalse(pool.receipt_exists(self.tmp, "2103"))
+        _, out = self.prompt("s-alg1", "【派活 #2101】Alg-p2-01 → Alg-p1-01：需求包 packages/drafts/alg/a.md")
+        self.assertNotIn("登记回执", out.get("additionalContext", ""))
+        _, out = self.route("pool", "--recover", sid="s-entry")
+        self.assertIn("#2102", out)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            setup.check(self.tmp)
+        self.assertNotIn("还停在旧版插件规则上", out.getvalue())
 
 
 if __name__ == "__main__":
