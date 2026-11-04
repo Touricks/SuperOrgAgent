@@ -5,6 +5,8 @@ description: 管理 Codex 智能体组织的项目会话、入口顺序、消息
 
 # 会话入口与路由
 
+会话绑定用于路由、角色上下文和追溯。正式登记默认交书记员，明确委派的代办按项目 AGENTS.md 执行，不通过改名或改身份获取权限。接到任务先读取当前规则，不把旧聊天里的规则快照作为现行规范。
+
 命令前缀 `python3 -I .agent-org/bin/codex_runtime.py`，在项目目录运行。每轮先 `context`，读返回的角色文件和 `org/org.md` 的路由表。没有绑定的聊天不自动充当 PMO。专业判断留给对应序列，质量验收独立执行。
 
 收到信息先用 `python3 -I .agent-org/bin/route.py classify --text <原话>` 或 `classify --draft <草稿路径>` 复用既有机械路由。needs_router 交 PMO +1 匹配，新的任务由研究员决定归属，R5/R6 决策和 R7 交接按同一规则执行。route.py 在 Codex 中只提供 classify，会话操作使用下面的入口。
@@ -32,7 +34,7 @@ description: 管理 Codex 智能体组织的项目会话、入口顺序、消息
 
 先 `plan` 看忙闲和 focus，再用 `message <接收池位> --kind <assign|report|register|review|decide|notify> --text <三行摘要> [--package <路径>] [--work-item <ID>]` 登记。派活和送审必须有当前项目的正式登记回执、正确主文档及真实工作项。需求包、送审包分别写明“业务产物写入范围”和“过程材料写入范围”；草稿、交付和验收材料不能靠执行角色自行扩权。
 
-同序列需求由书记员先流转到“执行中”，负责会话与接收池位一致后才派活；跨序列需求可在“待接单／已接单”送达，但只有“已接单”才能开工；送审项须为“待核查”，来源项须为“待验收”。`message` 自动实时核对这些条件，未通过不会生成可发送消息。
+同序列需求由承担登记任务的执行者先流转到“执行中”，负责会话与接收池位一致后才派活；跨序列需求可在“待接单／已接单”送达，但只有“已接单”才能开工；送审项须为“待核查”，来源项须为“待验收”。`message` 自动实时核对这些条件，未通过不会生成可发送消息。
 
 输出 action 为 reuse 时复用原记录，不再次发送；defer 为 true 时只留记录，不打断聚焦会话。只有 action 为 send 且未暂缓时，在授权范围内用原生工具发送返回的 prompt、thread_id 和 host_id。收到原生返回后 `receipt <message_id> <queued|delivered|failed|unknown> --evidence <回执摘要>`。接收会话先显式运行 `ack <message_id>`；派活或送审在写任何业务产物、过程材料前运行 `start <message_id>`，再次核对当前状态、负责会话和包内容。实际处理完再 `ack <message_id> --handled`。不依赖原生消息触发 UserPromptSubmit；queued、delivered 和任意 PreToolUse 都不会自动变成 received。结果未知先按消息 ID 核对原聊天，不盲目重发。
 

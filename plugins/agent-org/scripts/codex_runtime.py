@@ -76,7 +76,7 @@ class Pool:
             raise RuntimeError("会话池格式不正确，请核对原记录，不要清空重建")
         identities = [(v.get("host_id"), v.get("thread_id")) for v in data["bindings"].values()]
         if len(set(identities)) != len(identities):
-            raise RuntimeError("多个池位绑定到同一个会话，停止角色授权")
+            raise RuntimeError("多个池位绑定到同一个会话，停止路由并核对绑定")
         for name, binding in data["bindings"].items():
             if name not in self.slots or binding.get("role") != self.slots[name]["role"]:
                 raise RuntimeError("池位与角色计划不一致：" + name)
@@ -239,9 +239,15 @@ class Pool:
         thread = thread or os.environ.get("CODEX_THREAD_ID", "")
         state = self.load()
         name, binding = self.binding_for(state, thread)
+        instructions = self.root / "AGENTS.md"
+        current = {"path": str(instructions),
+                   "sha256": hashlib.sha256(instructions.read_bytes()).hexdigest() if instructions.is_file() else None,
+                   "note": "每轮重新读取项目 AGENTS.md；业务委派按当前规范和任务授权执行，绑定用于路由与追溯"}
         if not binding:
-            return {"role": None, "note": "本会话没有池位绑定，不自动充当 PMO 或书记员"}
+            return {"role": None, "thread_id": thread or None, "instructions": current,
+                    "note": "本会话没有池位绑定，不自动充当 PMO 或书记员；可执行研究员明确授权的初始化或维护任务"}
         return {"slot": name, **binding, "role_file": str(self.base / "roles" / (binding["role"] + ".md")),
+                "instructions": current,
                 "pending_messages": [dict(m, id=mid) for mid, m in state["messages"].items()
                                      if m["to"] == name and not m.get("handled_at")]}
 
@@ -409,9 +415,11 @@ class Pool:
         state = self.load()
         issues = []
         manifest = read(self.base / "manifest.json", {})
+        if (self.base / "state/upgrade.json").exists():
+            issues.append("插件升级未完成，先恢复完整版本")
         for rel, expected in manifest.get("files", {}).items():
-            if rel.startswith((".agent-org/bin/", ".agent-org/roles/")) or rel in (
-                    ".agent-org/policy.json", ".agent-org/pool-plan.json", ".codex/hooks.json"):
+            if rel.startswith((".agent-org/bin/", ".agent-org/roles/", ".agent-org/operations/")) or rel in (
+                    ".agent-org/policy.json", ".agent-org/pool-plan.json", ".agent-org/lark-risk.json", ".codex/hooks.json"):
                 p = self.root / rel
                 if not p.is_file() or hashlib.sha256(p.read_bytes()).hexdigest() != expected:
                     issues.append("生成文件变化：" + rel)
@@ -435,21 +443,26 @@ class Pool:
                 "note": "本地身份/项目归属/hook 检查；原生消息显式 ack，业务登记与独立验收另行验证"}
 
 
-def assert_writer(root, command):
+def assert_project_integrity(root):
+    """Check the installation, not the caller's business role or authorization."""
     pool = Pool(root)
-    state = pool.load()
-    thread = os.environ.get("CODEX_THREAD_ID", "")
-    _, b = pool.binding_for(state, thread)
-    session = state["sessions"].get(thread, {})
+    pool.load()
+    if (pool.base / "state/upgrade.json").exists():
+        raise RuntimeError("插件升级尚未完成；先用 codex_upgrade.py recover 恢复完整版本，再执行写入")
     manifest = read(pool.base / "manifest.json", {})
-    for rel in (".agent-org/policy.json", ".agent-org/pool-plan.json"):
+    if manifest.get("runtime") != "codex":
+        raise RuntimeError("当前项目没有有效的 Codex 运行清单")
+    files = manifest.get("files", {})
+    required = (".agent-org/policy.json", ".agent-org/pool-plan.json", ".agent-org/lark-risk.json", ".agent-org/bin/codex_runtime.py",
+                ".agent-org/bin/codex_hook.py", ".agent-org/bin/ledger.py")
+    if not all(files.get(rel) for rel in required):
+        raise RuntimeError("插件运行清单缺少必要文件记录，请通过维护入口更新")
+    for rel, expected in files.items():
+        if rel not in required and not rel.startswith((".agent-org/bin/", ".agent-org/roles/", ".agent-org/operations/")):
+            continue
         path = pool.root / rel
-        if hashlib.sha256(path.read_bytes()).hexdigest() != manifest.get("files", {}).get(rel):
-            raise RuntimeError("身份配置与初始化版本不一致，停止写入：" + rel)
-    if not b or not session.get("pretool_seen") or session.get("subagent"):
-        raise RuntimeError("未验证的 Codex 角色会话不能写飞书；先核对绑定和 hook")
-    if command != "comment" and b["role"] != "pmo-scribe":
-        raise RuntimeError("正式文档、工作项和状态只由已绑定的书记员写入")
+        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            raise RuntimeError("生成代码或配置与版本记录不一致，停止写入：" + rel)
 
 
 def main(argv=None):

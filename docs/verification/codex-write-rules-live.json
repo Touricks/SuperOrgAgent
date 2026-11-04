@@ -1,0 +1,242 @@
+{
+  "at": "2026-11-04T08:06:02.528211+00:00",
+  "version": "0.5.1-codex.4",
+  "status": "passed_in_scope",
+  "acceptance_role": "pmo-p2",
+  "publication_note": "Public summary. Project identifiers, private links, local paths and research content are omitted. Original evidence is retained locally.",
+  "independent_checks": {
+    "bindings": true,
+    "messages": true,
+    "workspace": true,
+    "history": true,
+    "ids_unchanged": true,
+    "manifest_matches": true,
+    "tested_source_matches": true,
+    "task_original_content_preserved": true,
+    "task_links_once": true,
+    "actual_pmo_p2_append": true
+  },
+  "upgrade": {
+    "version_before": "0.5.1-codex.2",
+    "version_after": "0.5.1-codex.4",
+    "binding_count": 21,
+    "bindings_unchanged": true,
+    "messages_count": 32,
+    "messages_unchanged": true,
+    "knowledge_and_workitem_ids_unchanged": true,
+    "business_file_changes": [],
+    "manifest_checked": 66,
+    "manifest_mismatches": [],
+    "AGENTS_outside_managed_block_unchanged": true,
+    "pending_upgrade": false
+  },
+  "pages": [
+    {
+      "page": 1,
+      "status": "verified",
+      "independent_checks": {
+        "source_hash": true,
+        "document_id": true,
+        "node_id": true,
+        "parent": true,
+        "space": true,
+        "title": true,
+        "callout": true,
+        "tables": true,
+        "formula_count": true
+      },
+      "content_checks": {
+        "source_hash": true,
+        "upload_hash": true,
+        "document_identity": true,
+        "space_and_parent": true,
+        "titles": true,
+        "title_then_native_callout": true,
+        "one_callout_three_paragraphs": true,
+        "callout_labels": true,
+        "all_visible_text_matches": true,
+        "all_table_cells_match": true,
+        "source_links_match": true,
+        "latex_matches": true
+      },
+      "revision_id": 3,
+      "table_dimensions_including_header": [
+        {
+          "rows": 11,
+          "columns": 4
+        },
+        {
+          "rows": 6,
+          "columns": 3
+        }
+      ],
+      "formula_count": 0
+    },
+    {
+      "page": 2,
+      "status": "verified",
+      "independent_checks": {
+        "source_hash": true,
+        "document_id": true,
+        "node_id": true,
+        "parent": true,
+        "space": true,
+        "title": true,
+        "callout": true,
+        "tables": true,
+        "formula_count": true
+      },
+      "content_checks": {
+        "source_hash": true,
+        "upload_hash": true,
+        "document_identity": true,
+        "space_and_parent": true,
+        "titles": true,
+        "title_then_native_callout": true,
+        "one_callout_three_paragraphs": true,
+        "callout_labels": true,
+        "all_visible_text_matches": true,
+        "all_table_cells_match": true,
+        "source_links_match": true,
+        "latex_matches": true
+      },
+      "revision_id": 4,
+      "table_dimensions_including_header": [
+        {
+          "rows": 6,
+          "columns": 3
+        },
+        {
+          "rows": 5,
+          "columns": 2
+        },
+        {
+          "rows": 6,
+          "columns": 3
+        }
+      ],
+      "formula_count": 1
+    }
+  ],
+  "task_association": {
+    "checks": {
+      "fetch_ok": true,
+      "original_body_and_status_pack_preserved": true,
+      "handoff_content_exact": true,
+      "each_new_page_link_once": true,
+      "original_requirement_fields_unchanged": true,
+      "original_review_fields_unchanged": true,
+      "one_append_by_actual_actor": true
+    },
+    "passed": true,
+    "work_item_state": "待验收",
+    "review_state": "待核查"
+  },
+  "agent_scenarios": {
+    "status": "passed",
+    "scope": "本轮 Agent 的规则判断、目标核对及部分成功/未知结果续办演练；明确委派场景具有真实发布证据。其他场景均为本地演练，未发起远端写入，不表述为服务器权限拦截或真实故障恢复测试。",
+    "scenarios": [
+      {
+        "id": "content_only",
+        "mode": "Agent 规则演练，无远端写入",
+        "passed": true,
+        "remote_mutations": 0
+      },
+      {
+        "id": "explicit_delegation",
+        "mode": "真实执行",
+        "passed": true
+      },
+      {
+        "id": "wrong_space",
+        "mode": "Agent 目标检查演练，虚构错误空间值仅在本地比较",
+        "passed": true,
+        "remote_mutations": 0
+      },
+      {
+        "id": "wrong_parent",
+        "mode": "Agent 目标检查演练，使用已知上级目录作为错误父节点，仅在本地比较",
+        "passed": true,
+        "remote_mutations": 0
+      },
+      {
+        "id": "partial_success_unknown_result",
+        "mode": "本地 Agent 规则演练；假设状态仅属于演练数据",
+        "passed": true,
+        "remote_calls": 0,
+        "remote_mutations": 0,
+        "real_fault_injection": false,
+        "real_publishing_record_modified": false
+      }
+    ]
+  },
+  "final_verification": {
+    "at": "2026-11-04T08:03:30.874903+00:00",
+    "checks": {
+      "pool_semantics_preserved": true,
+      "all_original_receipts_preserved": true,
+      "all_original_remote_ids_preserved": true,
+      "only_expected_business_change": true,
+      "manifest_integrity": true,
+      "source_integrity": true,
+      "original_source_docs_preserved": true,
+      "task_association_verified": true,
+      "all_page_readbacks_verified": true,
+      "exactly_two_target_children": true
+    },
+    "passed": true,
+    "installed_version": "0.5.1-codex.4",
+    "binding_count": 21,
+    "messages_count": 32,
+    "pool_semantic_comparison": {
+      "bindings": true,
+      "messages": true,
+      "workspace": true,
+      "history": true,
+      "pending": true
+    },
+    "receipt_count": 5,
+    "business_changed": [
+      "feishu/write-log.jsonl"
+    ],
+    "manifest_checked": 66,
+    "manifest_mismatches": [],
+    "source_hashes_checked": 22,
+    "source_mismatches": [],
+    "new_ledger_write_count": 1
+  },
+  "evidence_sha256": {
+    "upgrade-apply.json": "de202ef5bc3021c5e790281f8dcc81e10dc0c709576c5fabdcbe651178c2b21d",
+    "upgrade-compare.json": "44d7ee742ba8b5237ff81ba40eb1c2510874c0e68f7df7f753b39432fde1b2ea",
+    "pool-semantic-compare.json": "5c86349bce50af513f52558185d48c75f85b1c2b6f0bf481280d30811df538a6",
+    "context-after.json": "2217b661d2680892729fb4d88f6df99bd4282e3c16819dfd17fcc95bc8d0214b",
+    "setup-check.txt": "328e033ac4a62737470aea48fef6797f1a212b8a13b59f7345a8e6b799dbb2dd",
+    "final-verification.json": "52edcfdf8cf49bada1502757727375ff712194b8cf34d91495ddcdc854c06f67",
+    "agent-scenarios.json": "3e46432a5eac55bc2b6679f91e02ef885f4a56bbb4d8fb8154138de1fd01e792",
+    "task-link-verification.json": "f878b0a28da7ab2b66914c6eb76a831772175410e133d0969878cfd2d39d05a6",
+    "task-document-before.json": "bdb77b424114195914fe4402f68fe8ff255872c4a7f277872617e9aec548ec7f",
+    "task-document-after.json": "72023af0a457beb03db67d30e2bf82a31342ca7a965975c5a9acbe52061d711c",
+    "ledger-write-log-added.json": "1d6bd36238f4a2050f5a9e41e95fcd8f9698af2970bd9a3538260ddb57cea1bc",
+    "publishing/record.json": "ea48ce06365bb48882eb618173687fe07c7a67f2a9c37182193c9aec951972ff",
+    "publishing/page-1-create.json": "90fb47217620b0a7e79c3e102b1eb1e76583a40a00858d7566d9099cf7c0a030",
+    "publishing/page-1-node.json": "3feb83c8321f67aee0a00b10dc61ca156ee506d313265724f8361effdb73cd29",
+    "publishing/page-1-readback-md.json": "a64d5e349976dad02b77c597600261842bcee691f5d093fdafc5a8693b7123fb",
+    "publishing/page-1-readback-xml.json": "4a94f09276afd1305d4658dbef53dd316c9664dd3af22c2d404e4cc2a6951511",
+    "publishing/page-1-verification.json": "6f9e5c14c58704f180622d52abf21ba960d639ad6f7078b672c6bd686e6f1939",
+    "publishing/page-2-create.json": "37e08b7a7269f36fc296ca31a009841f229a9ed0e896f3e2694775224d25a64a",
+    "publishing/page-2-node.json": "f8eb923430bfc9e3028f14f48647eedc699779d7fe442a43b3d882be09a3060d",
+    "publishing/page-2-readback-md.json": "8b24b9eefdbe10097482cda6117c3c62baeba896b0355555648cf53c96260e07",
+    "publishing/page-2-readback-xml.json": "d6534df50af981f9f92bfb85524223fb4c1aaf9d581eef4e459d6253989b6ed6",
+    "publishing/page-2-verification.json": "ffca55a470fece35417227c3f2459dbc4ec4568c50f12e6c6a67cf67448d92fb",
+    "验收报告.md": "9cb609d5d8720c5bac4bb515c9b71d521fdabd073343c398341390b6beebfcee"
+  },
+  "excluded": [
+    "fresh-project-five-minute-live-initialization",
+    "full-claude-regression"
+  ],
+  "acceptance_completion": {
+    "state": "completed",
+    "result": "passed",
+    "scope": "existing-project upgrade, two-page publication, task association, local continuation scenario"
+  }
+}

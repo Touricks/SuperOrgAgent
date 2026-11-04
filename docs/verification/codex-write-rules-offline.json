@@ -1,0 +1,102 @@
+{
+  "at": "2026-11-04T07:45:02.628299+00:00",
+  "version": "0.5.1-codex.4",
+  "status": "passed",
+  "base_commit": "2f46db06ab2dd94e1084f857a98b5337039b21c4",
+  "results": [
+    {
+      "command": [
+        "python3",
+        "-I",
+        "-B",
+        "plugins/agent-org/scripts/orgspec.py",
+        "check"
+      ],
+      "exit_code": 0,
+      "tests": null,
+      "output": "规则文件检查：没有问题\n"
+    },
+    {
+      "command": [
+        "python3",
+        "-I",
+        "-B",
+        "plugins/agent-org/tests/test_codex.py"
+      ],
+      "exit_code": 0,
+      "tests": 64,
+      "output": "................................................................\n----------------------------------------------------------------------\nRan 64 tests in 4.056s\n\nOK\n"
+    },
+    {
+      "command": [
+        "python3",
+        "-I",
+        "-B",
+        "plugins/agent-org/tests/test_codex_upgrade.py"
+      ],
+      "exit_code": 0,
+      "tests": 2,
+      "output": "..\n----------------------------------------------------------------------\nRan 2 tests in 3.147s\n\nOK\n"
+    },
+    {
+      "command": [
+        "python3",
+        "-I",
+        "-B",
+        "plugins/agent-org/tests/test_initialization.py"
+      ],
+      "exit_code": 0,
+      "tests": 7,
+      "output": ".......\n----------------------------------------------------------------------\nRan 7 tests in 0.054s\n\nOK\n"
+    },
+    {
+      "command": [
+        "python3",
+        "-I",
+        "-B",
+        "plugins/agent-org/tests/test_plugin.py",
+        "LedgerLockTest",
+        "SecondRoundTest.test_failed_register_resumes_without_a_second_work_item",
+        "ThirdRoundTest.test_resume_after_lookup_failure_does_not_create_a_second_document",
+        "ThirdRoundTest.test_resume_reuses_the_source",
+        "ThirdRoundTest.test_stale_receipt_is_explained",
+        "FourthRoundTest.test_existing_can_resume_after_a_document_failure",
+        "SixthRoundLedgerTest.test_receipt_names_never_take_over_another_draft",
+        "SixthRoundLedgerTest.test_resume_keeps_set_values_and_writes_new_ones"
+      ],
+      "exit_code": 0,
+      "tests": 10,
+      "output": ".$REPO/plugins/agent-org/tests/test_plugin.py:3663: ResourceWarning: unclosed file <_io.TextIOWrapper name='$TEST_TMP/feishu/ids.json' mode='r' encoding='utf-8'>\n  self.assertEqual(json.loads(open(path, encoding=\"utf-8\").read()), {\"schema\": \"x\"})\nResourceWarning: Enable tracemalloc to get the object allocation traceback\n.........\n----------------------------------------------------------------------\nRan 10 tests in 0.222s\n\nOK\n"
+    }
+  ],
+  "source_hashes": {
+    "plugins/agent-org/.codex-plugin/plugin.json": "7c954ee3bb7cbfc8b9a20158a693d0b3f20bb5823c9f3f2e26d4f0148c99cd31",
+    "plugins/agent-org/scaffold/codex/AGENTS.md.tmpl": "8f13a2d60c439b9e773194f64d8fdde06b642fa2b0ed08174f76608aec8a1957",
+    "plugins/agent-org/scaffold/codex/scribe.md.tmpl": "8d9ff1b1913e0c47c58b8a66bc3d18153cb3d71043eee7204cadc168705faaab",
+    "plugins/agent-org/scripts/codex_hook.py": "fd5b3924e222b0db6e3e385f16eb0b7cc3e7389bfa8c9b8f8b7531e25929652f",
+    "plugins/agent-org/scripts/codex_onboarding.py": "9dfdb1d0d1d7e5aa529035cf98ce67423e4af079e6f678a776c93a08f33e505b",
+    "plugins/agent-org/scripts/codex_runtime.py": "496adbc991b852ecd693ead5c9a25f1dd2bcac0f278db90993918a78401fa92b",
+    "plugins/agent-org/scripts/codex_setup.py": "e2b24f79d4b8fbd75b9356c80a4ba26c4f08092118dc9c7d5299dabc5d29c420",
+    "plugins/agent-org/scripts/codex_upgrade.py": "fd0a482a5349c6e43d4d2847436648ebe3bb24ca1b95a2b005027bdc4b75488d",
+    "plugins/agent-org/scripts/export_field_dictionary.py": "604198c630314acdae96df7615b392628910ede4e3011daff57d94fd7dc640b8",
+    "plugins/agent-org/scripts/ledger.py": "3f88fb5970fa0d345ea1a99d7630974ecce420915f1247dcf4706ab862fa6ccd",
+    "plugins/agent-org/scripts/orgspec.py": "11b77705deea302fcf2dd20f761c5695df10fc7b16d834b59e60fa64b90da0ba",
+    "plugins/agent-org/scripts/pool.py": "d3a66b97d25d3fff498c98c371fc80351bd4b6b5640477c99ccd821f990e1960",
+    "plugins/agent-org/scripts/project_paths.py": "f50ffbf56c9dddcad17043c26259170f0361aaf9413ecc860d557660536d62bb",
+    "plugins/agent-org/scripts/route.py": "239d584280156ae2020d00960ee4a7ba977a59f8e76411e50f3ff0179fe6ae90",
+    "plugins/agent-org/scripts/setup.py": "bf71c28f22ef909abc8eafc75b3568e75f0d8ed6d0fcd9629fa2ac6847d4994f",
+    "plugins/agent-org/skills-codex/charter/SKILL.md": "e3ec2f9f0477ed049f733607c63ead4d181a10c03a76df21c3d7dfd5753afb7d",
+    "plugins/agent-org/skills-codex/entry/SKILL.md": "124247c1d277e025b821f6dd7b95a71e3cf88c6f074b8204eefb61f444b3aba1",
+    "plugins/agent-org/skills-codex/ledger/SKILL.md": "a89959fe643ed606bd1a83b5da7d5687529333a156fc621fdd969c5a9886e7a5",
+    "plugins/agent-org/skills-codex/ledger/references/publishing.md": "151ff82e75f751e705475192d37b81ccd082021b53b5b2cc03d5407c978a1cfb",
+    "plugins/agent-org/skills-codex/packages/SKILL.md": "2552dda5efe208b275d2565af564a43c84176d06f142550cec26400e8121e2bc",
+    "plugins/agent-org/skills-codex/setup/SKILL.md": "07de24f4f8af6551ce7e91c2f41d9744e2b27df4dd88102f6c48f595a0fd9822",
+    "plugins/agent-org/skills-codex/spec/SKILL.md": "43eaa484d61415cd4e11177c9761e50b2ce1158af498e93c34a53146e0d64b90"
+  },
+  "excluded": [
+    "fresh-project-five-minute-live-initialization",
+    "full-claude-regression"
+  ],
+  "live_acceptance": "delegated-to-PMO-p2-01-after-offline-checks",
+  "publication_note": "Local absolute paths in captured test output are redacted; commands, exit codes, counts and source hashes are preserved. Original output is retained locally."
+}

@@ -235,11 +235,13 @@ class Ledger:
         self.nodes = wiki.get("nodes") or {}
         self.tenant = wiki.get("tenant_domain")
         self.tag = os.environ.get("AGENT_ORG_TAG", "[PMO+0]")
+        self.actor = None
         if os.path.isfile(os.path.join(root, ".agent-org", "manifest.json")):
             import codex_runtime
             context = codex_runtime.Pool(root).context()
             policy = load_json(os.path.join(root, ".agent-org", "policy.json"), {})
             self.tag = (policy.get("agents", {}).get(context.get("role")) or {}).get("tag", "[unknown]")
+            self.actor = {key: context.get(key) for key in ("thread_id", "host_id", "slot", "role")}
         self.planned = []
         self._me = None
 
@@ -409,6 +411,8 @@ class Ledger:
         ids = sorted(set(re.findall(r'"(?:work_item_id|node_token|obj_token|document_id|url)"\s*:\s*"?([^",}\s]+)', out)))
         rec = {"ts": now(), "tool": "ledger.py", "session": self.tag,
                "argv": [a if len(a) < 300 else a[:300] + "…" for a in argv], "exit": code, "ids": ids[:10]}
+        if self.actor is not None:
+            rec["actor"] = self.actor
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
@@ -1802,7 +1806,7 @@ def main(argv=None):
             if mode == "apply" and os.path.isfile(os.path.join(lg.root, ".agent-org", "manifest.json")):
                 import codex_runtime
                 try:
-                    codex_runtime.assert_writer(lg.root, args.cmd)
+                    codex_runtime.assert_project_integrity(lg.root)
                 except codex_runtime.RuntimeError as e:
                     raise LedgerError(str(e))
             run_command(lg, args)

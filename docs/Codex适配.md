@@ -1,6 +1,6 @@
 # Codex Desktop 适配
 
-版本：0.5.1-codex.3。基于上游 0.5.1，沿用方括号路径修复、业务规则、模板绑定和书记员写入机制。Claude 的发布清单仍为 0.5.1，Codex 使用独立清单和技能入口；本分支的共享脚本修复同时接受两套回归测试。codex.3 仅调整 Codex 会话标题，codex.2 的现场测试记录保留原版本与范围。
+版本：0.5.1-codex.4。基于上游 0.5.1，业务职责由项目 AGENTS.md 规定，会话绑定用于路由与追溯。正式工作项继续经过台账事务，独立正文使用文档工具。Claude 发布清单保持 0.5.1；本轮不执行 Claude 全量回归和全新目录五分钟实测。
 
 ## 安装与首次配置
 
@@ -33,17 +33,34 @@ python3 -I plugins/agent-org/scripts/setup.py init --runtime codex --target <目
 
 | 路径 | 用途 |
 |---|---|
-| AGENTS.md 的 agent-org 区块 | 共用入口，不授予角色 |
+| AGENTS.md 的 agent-org 区块 | 当前职责、委派与外部写入规则 |
 | .codex/hooks.json | 角色上下文及工具检查 |
 | .agent-org/roles/ | 角色职责 |
 | .agent-org/pool-plan.json | 稳定池位、标题、模型和入口顺序 |
 | .agent-org/state/pool.json | 会话绑定、预约、消息、聚焦和历史 |
 | .agent-org/state/onboarding.json | 首次配置起点与历次结束检查 |
 | .agent-org/bin/ | 适配脚本及共享台账实现 |
+| .agent-org/operations/publishing.md | 当前版本的独立正文发布流程 |
+| .agent-org/upgrades/ | 本地升级备份；业务记录不回退 |
 | org/会话入口.md | 八个重点入口的查找顺序 |
 | spec/、org/、packages/、feishu/ | 规格、组织、任务包和飞书绑定 |
 
 用户维护的规格、决策和阶段计划保留；其他已修改生成文件产出 `.new`，本轮不安装混合版本，合并后重跑。原有 AGENTS.md 的其他内容和第三方 hook 保留。已有项目升级沿用空间、文档、回执和会话，不能覆盖旧项目来制造新用户测试结果。
+
+## 已有项目升级
+
+已有项目使用专用升级入口，不重新初始化、不重置计时、不创建空间、节点或会话：
+
+```bash
+python3 -I plugins/agent-org/scripts/codex_upgrade.py upgrade --target <已有项目>
+python3 -I plugins/agent-org/scripts/codex_upgrade.py upgrade --target <已有项目> --apply
+```
+
+先结束正在执行的写入，再核对预览中的本地变更。角色、脚本与管理规则一起更新；AGENTS 管理块之外的约定和用户 hooks 保留。冲突生成 `.new` 后停止，合并再预览。安装期间持有与台账兼容的本地文件锁，先保存备份，最后写版本清单。
+
+中断后执行 `codex_upgrade.py recover --target <已有项目>` 恢复完整旧版本，再预览升级。回退使用 `rollback --target <已有项目>`，可用 `--backup <备份ID>` 指定版本；存在新的文件修改时停止并保留现场。恢复和回退只修改备份中的插件文件，保留业务任务、远端对象和新回执。
+
+已有聊天下一轮读取当前 AGENTS、角色说明和项目内发布流程。`context` 返回当前规则路径与哈希，不依赖聊天自动刷新旧规则。源码验收记录见 [Codex 写入规则验证记录](Codex写入规则验证记录.md)。
 
 ## 会话归属与入口
 
@@ -63,7 +80,7 @@ python3 -I plugins/agent-org/scripts/setup.py init --runtime codex --target <目
 
 `setup.py template` 只读核对模板，`setup.py feishu --live` 预览绑定，加 `--apply` 保存。字段字典最多并发读取 4 种类型，单个请求失败不会保存不完整的导出。书记员运行 `ledger.py ensure-node all` 建立完整七序列的 29 个节点，一次运行按父节点共用列表结果，通常只需列出 4 组；已有 ID 沿用。
 
-Agent 使用 queue、blocked、verifying、reviewing、open、recent 查询台账。正式文档、工作项和状态由已绑定书记员通过 ledger.py 写入，继续使用写入锁、回读、登记回执和 `--resume`。主文档标题改为“工作项 ID｜包名（作者）：任务名”，标题值不再以 `#` 开头，避免 Markdown 导出出现双标题符号。
+Agent 使用 queue、blocked、verifying、reviewing、open、recent 查询台账。默认书记员承接登记，明确委派可代办，无需增加会话权限。工作项与任务包通过 ledger.py 写入，保留写锁、回读、登记回执和 `--resume`。独立正文按 `.agent-org/operations/publishing.md` 使用文档工具发布，逐篇记录真实 ID 和回读证据，关联原任务。主文档标题改为“工作项 ID｜包名（作者）：任务名”，标题值不再以 `#` 开头，避免 Markdown 导出出现双标题符号。
 
 ## 消息、开工与任务边界
 
@@ -87,7 +104,7 @@ received、handled 与工作项已验收分别记录。Stop 只表示回合结�
 
 在 Codex 要求时，由用户在 Settings > Hooks 审阅并信任生成的 hook；插件不修改信任记录。必需事件为 SessionStart、PreToolUse、Stop，每个角色必须观察到真实 PreToolUse。UserPromptSubmit 保留兼容，但缺失不使初始化失败。
 
-apply_patch 解析支持原生 `tool_input.command`，并保留旧 input/patch 包装。新增、修改、删除、移动都按实际路径检查，符号链接不能绕过评测或配置保护。台账写入口独立验证书记员身份。任意脚本或未触发 hook 的工具不属于路径检查的覆盖范围。
+apply_patch 解析支持原生 `tool_input.command`，并保留旧 input/patch 包装。新增、修改、删除、移动都按实际路径检查，符号链接不能绕过评测或配置保护。台账写入口独立检查生成代码和配置的完整性，不按会话角色拒绝写入。项目 AGENTS.md 可按明确要求维护；运行配置和评测路径继续受保护。任意脚本或未触发 hook 的工具不属于路径检查的覆盖范围。
 
 完成当次三处回读和最小立项登记后运行：
 
@@ -104,6 +121,7 @@ python3 -I plugins/agent-org/scripts/codex_onboarding.py finish --target <目标
 python3 -I -B plugins/agent-org/scripts/orgspec.py check
 python3 -I -B plugins/agent-org/tests/test_plugin.py
 python3 -I -B plugins/agent-org/tests/test_codex.py
+python3 -I -B plugins/agent-org/tests/test_codex_upgrade.py
 python3 -I -B plugins/agent-org/tests/test_initialization.py
 ```
 

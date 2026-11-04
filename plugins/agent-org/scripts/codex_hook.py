@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Codex hook adapter. Reuses upstream command parsing, not Claude identity.
 
-Best-effort command guardrails are not an OS isolation boundary. A trusted,
-working PreToolUse hook and role binding are prerequisites for ledger writes.
+Business assignment lives in project AGENTS.md. These best-effort operation and
+path checks are not an OS isolation boundary or a per-chat authorization system.
 """
 import hashlib
 import json
@@ -54,9 +54,33 @@ def protect_path(pool, policy, path, cwd):
             continue
         if guard.matches(rel, policy.get("h_paths", [])):
             return "评测保护路径保持只读：" + rel
-        if rel in ("AGENTS.md", "spec/task.json") or rel.startswith((".agent-org/", ".codex/")):
+        if rel == "spec/task.json" or rel.startswith((".agent-org/", ".codex/")):
             return "角色、运行状态和配置由初始化/会话命令维护：" + rel
     return None
+
+
+LEDGER_OPERATIONS = {
+    "workitem create": "ledger.py register <草稿>",
+    "workitem update": "ledger.py update <工作项 ID> --set <字段>=<值>",
+    "workflow transition-state": "ledger.py transition <工作项 ID> <状态>",
+    "comment add": "ledger.py comment <工作项 ID> --text <正文>",
+}
+
+
+def ledger_preview(command, cwd, pool, guard, fc):
+    """Only an explicit ledger invocation without --apply is a proven preview."""
+    found = False
+    for argv, where in guard.command_runs(command, cwd, str(pool.root)):
+        if not argv:
+            return False
+        if re.search(r"python[0-9.]*$", os.path.basename(argv[0])):
+            kind, script, rest = fc.python_target(argv[1:])
+            if kind != "script" or not script or Path(script).name != "ledger.py":
+                return False
+            if "--apply" in rest:
+                return False
+            found = True
+    return found
 
 
 def evaluate(pool, state, event, role):
@@ -100,24 +124,29 @@ def evaluate(pool, state, event, role):
         setup_path = Path(source.get("path", ""))
         if setup_path.is_file() and hashlib.sha256(setup_path.read_bytes()).hexdigest() == source.get("sha256"):
             fc.TRUSTED.add(str(setup_path))
-            for argv, where in guard.command_runs(command, cwd, str(pool.root)):
-                if argv and re.search(r"python[0-9.]*$", os.path.basename(argv[0])):
-                    kind, script, rest = fc.python_target(argv[1:])
-                    if kind == "script" and script and Path(os.path.join(where or cwd, script)).resolve() == setup_path.resolve():
-                        if role and "--apply" in rest:
-                            return "已认领的角色不修改项目初始化与空间绑定；在研究员的初始化会话核对后执行"
         write = guard.ledger_write(command, cwd)
-        if write and role != "pmo-scribe" and not (write == "comment" and role):
-            return "正式登记和状态修改只由已绑定书记员执行；其他会话交任务包"
+        child = bool(event.get("agent_id") or event.get("agent_type"))
+        if write and not ledger_preview(command, cwd, pool, guard, fc):
+            if child:
+                return "子智能体不执行外部写入；交由承接任务的主会话执行"
+            runtime.assert_project_integrity(pool.root)
         parsed = fc.parse(command, cwd)
         if parsed.mentions and (parsed.error or parsed.opaque):
-            return "无法完整检查飞书命令，请使用已校验的 ledger.py 入口"
+            return "无法完整解析飞书命令；请展开为可核对的直接命令，不通过未知包装器执行"
         for inv in parsed.invocations:
             item = fc.classify(inv, risk)
             if item["help"] or item["dry_run"]:
                 continue
-            if item["tier"] != "read" or item["yes"]:
-                return "飞书写入通过 ledger.py 执行，保留绑定校验、回读和回执；不直接调用 CLI 写命令"
+            if item["tier"] == "read":
+                continue
+            if child:
+                return "子智能体不执行外部写入；交由承接任务的主会话执行"
+            runtime.assert_project_integrity(pool.root)
+            if item["cli"] == "meegle" and item["key"] in LEDGER_OPERATIONS:
+                return "该台账事务使用 %s，保留锁、校验与登记回执" % LEDGER_OPERATIONS[item["key"]]
+            if item["tier"] != "write":
+                return "飞书命令 %s 被分类为 %s；请核对操作范围与工具分类，不能作为普通业务写入执行" % (
+                    item["key"], item["tier"])
     return None
 
 

@@ -18,6 +18,7 @@ import setup
 import codex_setup
 import codex_runtime as runtime
 import codex_hook
+import codex_upgrade
 import ledger
 import route
 import orgspec
@@ -200,7 +201,13 @@ class CodexTest(unittest.TestCase):
         self.assertEqual(priority, list(codex_setup.PRIORITY_ROLES))
         self.assertFalse(any(s["pin"] for s in self.pool.slots.values()))
         self.assertTrue(all(s["model"] == "inherit" for s in self.pool.slots.values()))
-        self.assertEqual((self.root / ".agent-org/orgspec/rules.json").read_bytes(), (ROOT / "orgspec/rules.json").read_bytes())
+        generated = json.loads((self.root / ".agent-org/orgspec/rules.json").read_text())
+        original = json.loads((ROOT / "orgspec/rules.json").read_text())
+        for key in original.keys() - {"sequences", "limits_note", "plugin_decisions"}:
+            self.assertEqual(generated[key], original[key], key)
+        for before, after in zip(original["sequences"], generated["sequences"]):
+            self.assertEqual({k: v for k, v in before.items() if k != "notes"},
+                             {k: v for k, v in after.items() if k != "notes"})
 
     def test_rerun_preserves_binding_and_handwritten_spec(self):
         binding = self.bind("Alg-p2-01")
@@ -347,28 +354,31 @@ class CodexTest(unittest.TestCase):
         self.assertTrue(self.denied(response))
         self.assertEqual(before, self.pool.load()["sessions"]["scribe"])
 
-    def test_only_scribe_writes_and_comment_uses_bound_tag(self):
+    def test_main_chat_writes_follow_assignment_and_comment_keeps_real_tag(self):
         self.bind("PMO-p0-01", "scribe"); self.bind("Alg-p2-01", "alg")
         cmd = "python3 -I .agent-org/bin/ledger.py register task.md --apply"
-        self.assertTrue(self.denied(self.tool("alg", cmd)))
+        self.assertFalse(self.denied(self.tool("alg", cmd)))
         self.assertFalse(self.denied(self.tool("scribe", cmd)))
+        self.assertFalse(self.denied(self.tool("unbound-maintainer", cmd)))
         with mock.patch.dict(os.environ, {"CODEX_THREAD_ID": "alg", "AGENT_ORG_TAG": "[PMO+0]"}):
-            with self.assertRaises(runtime.RuntimeError): runtime.assert_writer(str(self.root), "register")
-            runtime.assert_writer(str(self.root), "comment")
+            runtime.assert_project_integrity(str(self.root))
             self.assertEqual(ledger.Ledger(str(self.root), "offline").tag, "[Alg+2]")
 
-    def test_unobserved_hook_blocks_direct_ledger_write(self):
+    def test_hook_observation_is_not_a_business_write_credential(self):
         self.bind("PMO-p0-01", "scribe")
         with mock.patch.dict(os.environ, {"CODEX_THREAD_ID": "scribe"}):
-            with self.assertRaises(runtime.RuntimeError): runtime.assert_writer(str(self.root), "register")
+            runtime.assert_project_integrity(str(self.root))
             self.tool("scribe", "pwd")
-            runtime.assert_writer(str(self.root), "register")
+            runtime.assert_project_integrity(str(self.root))
 
-    def test_raw_feishu_writes_and_wrappers_denied(self):
+    def test_raw_workitems_keep_ledger_but_independent_documents_are_supported(self):
         self.bind("PMO-p0-01", "scribe")
-        for cmd in ("meegle workitem create --name a", "sh -c 'lark-cli docs +create --title a'",
+        for cmd in ("meegle workitem create --name a",
                     "python3 -c \"import subprocess; subprocess.run(['meegle', 'workitem', 'create'])\""):
             with self.subTest(cmd=cmd): self.assertTrue(self.denied(self.tool("scribe", cmd)))
+        for cmd in ("lark-cli docs +create --title a --as user", "sh -c 'lark-cli docs +create --title a'",
+                    "lark-cli docs +update --doc x --command overwrite --as user"):
+            with self.subTest(cmd=cmd): self.assertFalse(self.denied(self.tool("scribe", cmd)))
         self.assertFalse(self.denied(self.tool("scribe", "meegle auth status")))
 
     def test_apply_patch_protects_move_and_symlink_paths(self):
@@ -515,7 +525,7 @@ class CodexTest(unittest.TestCase):
         p = self.root / ".agent-org/policy.json"
         p.write_text(p.read_text() + " ")
         with mock.patch.dict(os.environ, {"CODEX_THREAD_ID": "scribe"}):
-            with self.assertRaises(runtime.RuntimeError): runtime.assert_writer(str(self.root), "register")
+            with self.assertRaises(runtime.RuntimeError): runtime.assert_project_integrity(str(self.root))
 
     def test_package_manifest_points_to_exact_six_skills(self):
         manifest = json.loads((ROOT / ".codex-plugin/plugin.json").read_text())
@@ -528,7 +538,7 @@ class CodexTest(unittest.TestCase):
         cmd = "python3 -I %s feishu --target %s --live" % (shlex.quote(str(ROOT / "scripts/setup.py")), shlex.quote(str(self.root)))
         self.assertFalse(self.denied(self.tool("setup-chat", cmd)))
         self.bind("Alg-p2-01", "alg")
-        self.assertTrue(self.denied(self.tool("alg", cmd + " --apply")))
+        self.assertFalse(self.denied(self.tool("alg", cmd + " --apply")))
 
     def test_hook_stays_bound_to_project_when_tool_cwd_is_elsewhere(self):
         self.bind("Alg-p2-01", "alg")
@@ -537,6 +547,159 @@ class CodexTest(unittest.TestCase):
                 "cwd": self.tmp.name, "tool_input": {"command": "meegle workitem create --name a"}}), text=True, capture_output=True)
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertTrue(self.denied(json.loads(p.stdout)))
+
+    def test_generated_instructions_have_no_writer_acl_conflicts(self):
+        policy = json.loads((self.root / ".agent-org/policy.json").read_text())
+        for row in [*policy["agents"].values(), policy["default_agent"]]:
+            for key in ("ledger_write", "lark_write", "meegle_write"):
+                self.assertNotIn(key, row)
+        paths = [self.root / "AGENTS.md", self.root / "org/org.md", self.root / "org/grants.md",
+                 self.root / ".agent-org/orgspec/rules.json", *self.root.glob(".agent-org/roles/*.md")]
+        for p in paths:
+            for old in ("唯一的写入方", "写权只认", "所有写操作都用", "只由书记员写"):
+                self.assertNotIn(old, p.read_text(), (p, old))
+        self.assertIn("普通角色先准备草稿", (self.root / "AGENTS.md").read_text())
+        self.assertIn("同一请求只有一个执行者", (self.root / "AGENTS.md").read_text())
+
+    def test_context_refreshes_instructions_without_rebinding(self):
+        self.bind("PMO-p1-01", "router")
+        before = self.pool.context("router")
+        path = self.root / "AGENTS.md"
+        patch = "*** Begin Patch\n*** Update File: AGENTS.md\n@@\n+项目补充：本次由 PMO +1 代办。\n*** End Patch"
+        self.assertFalse(self.denied(self.event("PreToolUse", "router", tool_name="apply_patch", tool_input={"command": patch})))
+        path.write_text(path.read_text() + "\n项目补充：本次由 PMO +1 代办。\n")
+        after = self.pool.context("router")
+        self.assertNotEqual(before["instructions"]["sha256"], after["instructions"]["sha256"])
+        self.assertEqual(before["thread_id"], after["thread_id"])
+        self.assertEqual(after["role"], "pmo-router")
+        runtime.assert_project_integrity(self.root)
+        self.assertTrue(self.apply(self.build()))
+        self.assertIn("本次由 PMO +1 代办", path.read_text())
+
+    def test_unbound_audit_keeps_thread_without_inventing_role(self):
+        with mock.patch.dict(os.environ, {"CODEX_THREAD_ID": "maintenance", "AGENT_ORG_TAG": "[PMO+0]"}):
+            lg = ledger.Ledger(str(self.root), "offline")
+            self.assertEqual(lg.tag, "[unknown]")
+            lg.log(["fixture"], 0, "{}")
+        record = json.loads((self.root / "feishu/write-log.jsonl").read_text().splitlines()[-1])
+        self.assertEqual(record["actor"]["thread_id"], "maintenance")
+        self.assertIsNone(record["actor"]["role"])
+
+    def test_integrity_checks_code_but_not_business_role(self):
+        for name in ("PMO-p0-01", "PMO-p1-01", "PMO-p2-01", "Alg-p1-01"):
+            self.bind(name, name)
+            with mock.patch.dict(os.environ, {"CODEX_THREAD_ID": name}):
+                runtime.assert_project_integrity(self.root)
+        script = self.root / ".agent-org/bin/ledger.py"
+        script.write_text(script.read_text() + "\n# local edit\n")
+        with self.assertRaisesRegex(runtime.RuntimeError, "代码或配置"):
+            runtime.assert_project_integrity(self.root)
+
+    def test_child_direct_document_write_and_parent_receipt_are_separate(self):
+        self.bind("PMO-p0-01", "scribe")
+        self.tool("scribe", "pwd")
+        before = self.pool.load()
+        result = self.tool("scribe", "lark-cli docs +create --title a --as user", agent_id="reviewer")
+        self.assertTrue(self.denied(result))
+        self.assertEqual(before, self.pool.load())
+        preview = self.tool("scribe", "python3 -I .agent-org/bin/ledger.py register draft.md", agent_id="reviewer")
+        self.assertFalse(self.denied(preview))
+        self.assertEqual(before, self.pool.load())
+
+    def test_unknown_and_high_risk_dont_claim_ledger_support(self):
+        for command in ("lark-cli docs nonexistent --as user", "meegle auth login"):
+            response = self.tool("maintenance", command)
+            self.assertTrue(self.denied(response))
+            self.assertNotIn("ledger.py", response["hookSpecificOutput"]["permissionDecisionReason"])
+        self.assertFalse(self.denied(self.tool("maintenance", "lark-cli docs +create --title a --yes")))
+        self.assertFalse(self.denied(self.tool("maintenance", "lark-cli docs +create --title a --dry-run")))
+
+    def changed_plan(self):
+        plan = self.build()
+        rel = ".agent-org/roles/pmo-scribe.md"
+        text, executable, keep = plan.files[rel]
+        plan.files[rel] = (text + "\n升级测试说明。\n", executable, keep)
+        return plan
+
+    def test_upgrade_rollback_preserves_pool_and_business_records(self):
+        self.bind("PMO-p0-01", "scribe")
+        state = self.pool.file.read_bytes()
+        old = (self.root / ".agent-org/roles/pmo-scribe.md").read_bytes()
+        self.assertTrue(self.apply(self.changed_plan()))
+        receipt = self.root / "packages/sent/after-upgrade.json"
+        receipt.write_text('{"document":"created-after-upgrade"}')
+        result = codex_upgrade.rollback(self.root)
+        self.assertEqual(result["status"], "rolled_back")
+        self.assertEqual(self.pool.file.read_bytes(), state)
+        self.assertEqual((self.root / ".agent-org/roles/pmo-scribe.md").read_bytes(), old)
+        self.assertEqual(json.loads(receipt.read_text())["document"], "created-after-upgrade")
+        runtime.assert_project_integrity(self.root)
+
+    def test_failed_upgrade_restores_old_files_and_manifest(self):
+        old = (self.root / ".agent-org/manifest.json").read_bytes()
+        original = codex_upgrade.write
+        def fail(path, text, mode=None):
+            if str(path).endswith("roles/pmo-scribe.md"):
+                raise OSError("injected disk error")
+            return original(path, text, mode)
+        with mock.patch.object(codex_upgrade, "write", side_effect=fail):
+            with self.assertRaisesRegex(OSError, "injected"):
+                self.apply(self.changed_plan())
+        self.assertFalse(codex_upgrade.marker(self.root).exists())
+        self.assertEqual((self.root / ".agent-org/manifest.json").read_bytes(), old)
+        runtime.assert_project_integrity(self.root)
+
+    def test_interrupted_upgrade_requires_recovery_and_preserves_concurrent_edit(self):
+        original = codex_upgrade.write
+        def interrupt(path, text, mode=None):
+            result = original(path, text, mode)
+            if str(path).endswith("roles/pmo-scribe.md"):
+                raise KeyboardInterrupt()
+            return result
+        with mock.patch.object(codex_upgrade, "write", side_effect=interrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.apply(self.changed_plan())
+        with self.assertRaisesRegex(runtime.RuntimeError, "升级尚未完成"):
+            runtime.assert_project_integrity(self.root)
+        role = self.root / ".agent-org/roles/pmo-scribe.md"
+        interrupted = role.read_text()
+        role.write_text(interrupted + "\nuser edit\n")
+        with self.assertRaisesRegex(ValueError, "文件被修改"):
+            codex_upgrade.recover(self.root)
+        self.assertIn("user edit", role.read_text())
+        role.write_text(interrupted)
+        self.assertEqual(codex_upgrade.recover(self.root)["status"], "recovered")
+        runtime.assert_project_integrity(self.root)
+
+    def test_upgrade_entry_rejects_new_projects(self):
+        with tempfile.TemporaryDirectory() as empty:
+            p = subprocess.run([sys.executable, "-I", str(ROOT / "scripts/codex_upgrade.py"),
+                                "upgrade", "--target", empty], capture_output=True, text=True)
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("已有 Codex 项目", p.stderr)
+
+    def test_upgrade_respects_an_active_business_transaction(self):
+        before = (self.root / ".agent-org/manifest.json").read_bytes()
+        with ledger.write_lock(str(self.root), wait=0):
+            with self.assertRaisesRegex(ValueError, "台账写入仍在执行"):
+                self.apply(self.changed_plan())
+        self.assertEqual((self.root / ".agent-org/manifest.json").read_bytes(), before)
+        self.assertFalse(codex_upgrade.marker(self.root).exists())
+
+    def test_recover_noop_does_not_initialize_a_directory(self):
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertEqual(codex_upgrade.recover(folder)["status"], "no_pending_upgrade")
+            with self.assertRaises(ValueError):
+                codex_upgrade.rollback(folder)
+            self.assertEqual(list(Path(folder).iterdir()), [])
+
+    def test_rollback_preserves_new_user_instruction_edits(self):
+        self.assertTrue(self.apply(self.changed_plan()))
+        role = self.root / ".agent-org/roles/pmo-scribe.md"
+        role.write_text(role.read_text() + "\n新用户约定。\n")
+        with self.assertRaisesRegex(ValueError, "不匹配该升级结果"):
+            codex_upgrade.rollback(self.root)
+        self.assertIn("新用户约定", role.read_text())
 
 
 if __name__ == "__main__":

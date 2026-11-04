@@ -1,10 +1,12 @@
 # Super Org Agent
 
-Claude Code / Codex Desktop 插件：把一个研究项目组织成七个序列（产品、算法、工程、基础设施、质量、项目管理、外联）、三个职级（+0 到 +2）的子智能体或桌面会话，研究员是 +3。项目管理 +2 是研究员平时的入口，特殊情况下研究员也直接委托其余六个序列的 +2；交接写成五类任务包（需求包、交付包、送审包、验收包、决策包）；任务账本在飞书项目，任务包在飞书文档，书记员是正式文档和状态的唯一写入方。
+Claude Code / Codex Desktop 插件：把一个研究项目组织成七个序列（产品、算法、工程、基础设施、质量、项目管理、外联）、三个职级（+0 到 +2）的子智能体或桌面会话，研究员是 +3。项目管理 +2 是研究员平时的入口，特殊情况下研究员也直接委托其余六个序列的 +2；交接写成五类任务包（需求包、交付包、送审包、验收包、决策包）；任务账本在飞书项目，任务包在飞书文档。Claude 由书记员统一写入；Codex 默认由书记员承接登记，明确委派可由其他会话代办，具体职责见项目 AGENTS.md。
 
 Claude 使用说明见 [docs/使用说明.md](docs/使用说明.md)。Codex 开发版基于 **0.5.1**，安装、初始化与验证见 [docs/Codex适配.md](docs/Codex适配.md)。
 
 在新项目里试用 Codex 版，可直接使用 [Codex 新项目测试提示词](docs/Codex新项目测试提示词.md)。它覆盖飞书项目、知识库和角色会话的初始化，并通过一次真实交接检查三者的关联。
+
+Codex 的 PMO 写入职责与独立正文发布问题已在 `0.5.1-codex.4` 修复，更新设计见 [Codex 写入规则修复方案](docs/Codex写入规则修复方案.md)，实施与验收状态见 [验证记录](docs/Codex写入规则验证记录.md)。
 
 ## 安装
 
@@ -25,7 +27,7 @@ claude plugin install agent-org@agent-org
 .agents/plugins/marketplace.json    Codex 本地市场（agent-org-codex）
 plugins/agent-org/
 ├─ .claude-plugin/plugin.json
-├─ .codex-plugin/plugin.json         Codex 0.5.1-codex.3
+├─ .codex-plugin/plugin.json         Codex 0.5.1-codex.4
 ├─ orgspec/                          组织规则（rules.json，英文标识）和术语表（terms.zh.json）
 ├─ scripts/                          orgspec.py 读规则和检查包；setup.py 初始化和开池清单；ledger.py 台账；route.py 路由、收件箱、聚焦会话和会话池；pool.py 认领和会话状态
 ├─ scaffold/                         初始化时生成项目文件用的模板和 hook
@@ -53,10 +55,13 @@ python3 -I plugins/agent-org/scripts/orgspec.py check
 ```bash
 python3 -I -B plugins/agent-org/tests/test_plugin.py
 python3 -I -B plugins/agent-org/tests/test_codex.py
+python3 -I -B plugins/agent-org/tests/test_codex_upgrade.py
 python3 -I -B plugins/agent-org/tests/test_initialization.py
 ```
 
 ## 状态
+
+0.5.1-codex.4：项目 AGENTS.md 管理职责和委派，取消逐角色写入限制；工作项保留台账事务，独立正文通过文档工具发布。新增已有项目的本地升级、恢复和回退入口，保留会话与业务记录。83 个离线测试通过；PMO +2 已在既有项目完成升级和两篇正文发布、回读及原任务关联，21 个绑定和原登记记录保留。本轮五分钟首次初始化与 Claude 全量回归按用户要求另行验收，证据见[验证记录](docs/Codex写入规则验证记录.md)。
 
 0.5.1-codex.3：会话标题缩短为 `[项目名] <池位名>`，例如 `[Thesis-Phase1] RnD-p0-01`，移除中文序列名、重复职级和“池位”等后缀。角色绑定和 Claude 命名逻辑保持不变；已有聊天由负责项目初始化的会话按新计划更新标题。
 
