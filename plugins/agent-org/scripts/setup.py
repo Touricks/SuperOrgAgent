@@ -1760,7 +1760,7 @@ def structure_md(spec, ids):
 def migration_md(spec, ids, fd, found_views=None, problems=None, switch=None, seqs=None):
     m = ids.get("meegle") or {}
     lines = ["# 建空间与核对清单", "",
-             "> 由 `setup.py feishu` 生成。项目空间从模板空间（默认叫 %s）用“分享空间配置”复制：类型、字段、流程、表单、角色和详情页跟着复制过来，条件视图和空间置顶不复制，每个项目空间各建一次。这里缺的结构先在模板里补上，以后复制的空间就都有；本空间也照样补一遍，已经复制出来的空间不会跟着模板变。补好以后重跑 `setup.py feishu --live --apply`。知识库节点由书记员用 `ledger.py ensure-node` 建。" % DEFAULT_TEMPLATE_SPACE,
+             "> 由 `setup.py feishu` 生成。项目空间从模板空间（默认叫 %s）复制类型、字段、流程、表单、角色和详情页。自定义视图不属于初始化，不创建、不补齐、不作为通过条件，禁止用 computer-use 配置视图。Agent 使用 ledger.py query 查询台账。结构缺项交模板维护者处理，不能让新用户现场搭模板。知识库节点由书记员用 `ledger.py ensure-node` 建。" % DEFAULT_TEMPLATE_SPACE,
              "> 空间里已经有、只是名字和这里不同的，不必改名：用 `--map <类型标识>=<空间里的类型名>` 或 `--map <类型标识>.<字段标识>=<空间里的字段名>` 指认。绑定以后脚本按键找，空间里改名也不会断。", ""]
     if switch:
         lines += switch_md(switch)
@@ -1771,25 +1771,6 @@ def migration_md(spec, ids, fd, found_views=None, problems=None, switch=None, se
     else:
         lines += [orgspec.md_table(["对象", "问题", "怎么办"], problems) if problems else "无。", ""]
     lines += [structure_md(spec, ids)]
-    rows = []
-    for v in spec.rules["feishu"]["views"]:
-        found = None if found_views is None else found_views.get(v["name"])
-        pinned = bool(v.get("pinned"))
-        if found is True and not pinned:
-            continue
-        how = "条件：%s" % v["where"]
-        if v.get("order"):
-            how += "；排序：%s" % v["order"]
-        if v.get("columns"):
-            how += "；显示列：%s" % v["columns"]
-        if v.get("mode"):
-            how += "；%s" % v["mode"]
-        if found is True:
-            how = "确认已放进空间置顶、显示列已保存"
-        rows.append([v["name"], spec.term("wi", v["on"]), {True: "已有", False: "没有", None: "待核对"}[found], how,
-                     "放进空间置顶" if pinned else ""])
-    lines += ["## 条件视图", "", orgspec.md_table(["视图", "类型", "现状", "怎么建", "置顶"], rows), "",
-              "条件视图只能在网页上建。新建视图的对话框只能放进“个人”，要放进空间置顶，在左侧“空间置顶”的“+”里选“添加现有”。显示列在视图右上角“…”→“设置视图展示”里改，改完点“存在本地变更”里的“保存”，才对所有人生效。脚本只能查到视图在不在，查不到它是否置顶。", ""]
     rows = []
     nodes = (ids.get("wiki") or {}).get("nodes") or {}
     renames = False
@@ -1820,11 +1801,9 @@ def migration_md(spec, ids, fd, found_views=None, problems=None, switch=None, se
         ["知识空间 space_id", "有" if wiki.get("space_id") else "缺", "先在已有的知识空间里找（名字可能不一样），确认没有再建：研究员确认后由 setup 技能执行，或者研究员自己执行 `lark-cli wiki +space-create --name \"<知识空间名>\" --description \"<一句话>\" --as user`，再重跑 `setup.py feishu --live --apply`；步骤见 setup 技能第四步“飞书文档”一节"],
     ]
     lines += ["## 读回", "", orgspec.md_table(["项", "现状", "怎么补"], readback), ""]
-    lines += ["## 网页上还要做的事", "",
-              "下面几项脚本核对不了，在网页上做（可以由会话代点），做完自己勾掉：", "",
-              bullets(["六种类型的详情页布局：默认“基本信息”里只有“名称”，照搭建手册（references/build-space.md）第 8 步把字段放进去，人在页面上才看得到。在模板空间里做，复制时一起带过来。",
-                       "项目详情页加一个标签页，名为“%s”，放一个“工作项视图”控件，列出这个项目下的%s。也在模板空间里做。" % (spec.term("wi", "same_seq"), spec.term("wi", "same_seq")),
-                       "知识库里给人看的参考（可选）：五份包模板（源文件在 `.claude/agent-org/templates/`）和字段字典（`feishu/field-dictionary.md`）。插件只读本地副本，放进知识库只是方便人翻看。"]), ""]
+    lines += ["## 模板维护说明", "",
+              "流转表单和详情页布局由维护者在模板空间里做，复制时带入；脚本无法核对这些布局。缺项交模板维护者处理，不在新用户初始化中打开网页补配置。", "",
+              "五份包模板和字段字典由插件在本地提供，使用对应 runtime 的 templates 目录；上传知识库供人查阅是日常使用选项，不属于配置验收。", ""]
     return "\n".join(lines)
 
 
@@ -1912,7 +1891,7 @@ def old_space_items(spec, project_key, type_keys):
 
 def read_back(spec, ids, task_feishu, export_dir, maps, switch=None):
     """Find the project's space, export its field dictionary, bind the rules to it, and read
-    open_id, space_id, node titles and views. Returns (field dictionary, {view: True/False/None},
+    open_id, space_id and node titles. Returns (field dictionary, empty view diagnostics,
     binding problems). The space the task file names is looked up every time: a name can come to
     mean another space, a key cannot. When it is not the space bound last time, the old binding
     is dropped and `switch` gets both spaces and what the old one still holds."""
@@ -1975,28 +1954,7 @@ def read_back(spec, ids, task_feishu, export_dir, maps, switch=None):
             title = ledger._find(got or {}, ("title",))
             if title:
                 n["title"] = title
-    found = {}
-    for v in spec.rules["feishu"]["views"]:
-        tkey = (m["types"].get(v["on"]) or {}).get("type_key")
-        if not tkey:
-            found[v["name"]] = None
-            continue
-        ok, data = True, None
-        try:
-            data = cli_json(["meegle", "view", "search", "--project-key", m["project_key"], "--view-scope", tkey,
-                             "--key-word", v["name"], "--format", "json"])
-        except SetupError as e:
-            ok = False
-            print("提醒：没能读回视图“%s”：%s" % (v["name"], e))
-        views = [d for d in ledger._walk(data) if d.get("view_id") or d.get("id")] if ok and data else []
-        if not ok:
-            found[v["name"]] = None
-        elif data in (None, [], {}) or views:
-            found[v["name"]] = any((d.get("view_name") or d.get("name")) == v["name"] for d in views)
-        else:
-            found[v["name"]] = None
-            print("提醒：视图“%s”的查询结果读不懂，标成待核对" % v["name"])
-    return fd, found, problems
+    return fd, {}, problems
 
 
 def switch_md(switch):
@@ -2006,7 +1964,7 @@ def switch_md(switch):
     rows = [["旧空间", o.get("space_name", ""), o.get("simple_name", ""), o.get("project_key", "")],
             ["新空间", n.get("space_name") or "", n.get("simple_name") or "", n.get("project_key") or ""]]
     lines = ["## 换空间", "",
-             "任务文件指的空间和上次绑定的不是同一个，这次按新空间重新绑定，原来的类型、字段和视图绑定作废。知识库不跟着换。", "",
+             "任务文件指的空间和上次绑定的不是同一个，这次按新空间重新绑定，原来的类型和字段绑定作废。知识库不跟着换。", "",
              orgspec.md_table(["", "空间名", "simple_name", "project_key"], rows), ""]
     if switch["held"]:
         lines += ["旧空间里还有工作项：%s。插件搬不了工作项，它们留在旧空间当档案，台账以后不再读写；没办完的要不要在新空间重建，"
@@ -2046,7 +2004,7 @@ def feishu(target, maps, live, apply, leave_old=False):
         except Exception as e:                       # an output shape nobody expected
             shutil.rmtree(export_dir, ignore_errors=True)
             raise SetupError("读回时遇到没见过的输出（%s: %s）；什么都没写" % (type(e).__name__, e))
-        ids["meegle"]["views_found"] = found_views
+        ids["meegle"].pop("views_found", None)
         if switch and apply and not leave_old and (switch["held"] or switch["unchecked"]):
             shutil.rmtree(export_dir, ignore_errors=True)
             why = ("旧空间“%s”里还有工作项（%s）" % (switch["old"].get("space_name", ""), "、".join(switch["held"]))

@@ -14,6 +14,7 @@ Usage:
     python3 -I export_field_dictionary.py --project-key KEY --types 项目,决策 --print
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import datetime
 import json
 import os
@@ -25,7 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 def meegle(*args):
     cmd = ["meegle", *args, "--format", "json"]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if proc.returncode != 0:
         raise RuntimeError(f"{' '.join(cmd)} 退出码 {proc.returncode}：{proc.stdout[-300:]}{proc.stderr[-300:]}")
     return json.loads(proc.stdout)
@@ -51,6 +52,18 @@ def field_record(f):
     if f.get("related_work_item_info"):
         rec["related"] = f["related_work_item_info"]
     return rec
+
+
+def export_types(types, key, workers=4):
+    """Independent read-only type requests; preserve source ordering and propagate errors."""
+    def export(t):
+        fields = paged("meta-fields", key, t["type_key"])
+        roles = paged("meta-roles", key, t["type_key"])
+        return t["type_key"], {"name": t.get("name"), "api_name": t.get("api_name"),
+            "fields": [field_record(f) for f in fields],
+            "roles": [{"role_id": r.get("role_id"), "role_name": r.get("role_name")} for r in roles]}
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return dict(pool.map(export, types))
 
 
 def to_markdown(doc):
@@ -104,20 +117,15 @@ def main():
         "missing_types": [n for n in wanted or [] if not any(n in names(t) for t in types)],
         "disabled_types": [],
     }
+    enabled = []
     for t in types:
         if wanted is not None and not set(wanted) & names(t):
             continue
         if t.get("is_disable") == 1:
             doc["disabled_types"].append(t.get("name") or t["type_key"])
             continue
-        fields = paged("meta-fields", key, t["type_key"])
-        roles = paged("meta-roles", key, t["type_key"])
-        doc["types"][t["type_key"]] = {
-            "name": t.get("name"),
-            "api_name": t.get("api_name"),
-            "fields": [field_record(f) for f in fields],
-            "roles": [{"role_id": r.get("role_id"), "role_name": r.get("role_name")} for r in roles],
-        }
+        enabled.append(t)
+    doc["types"] = export_types(enabled, key)
 
     if args.print:
         print(json.dumps(doc, ensure_ascii=False, indent=2))

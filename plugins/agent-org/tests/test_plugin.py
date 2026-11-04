@@ -567,6 +567,8 @@ class FeishuShapeTest(ProjectCase):
                                  (("wiki", "+node-get"), fixture("wiki-node-get.json"))])
         self.run_quiet(ledger.register, lg, path)
         argv, _, stdin = next(c for c in lg.calls if "+create" in c[0])
+        self.assertTrue(argv[argv.index("--title") + 1].startswith("工作项 7160000001｜"))
+        self.assertFalse(argv[argv.index("--title") + 1].startswith("#"))
         self.assertEqual(argv[argv.index("--content") + 1], "-")
         self.assertIn("## 认知层", stdin)
         self.assertIn("## 交接记录", stdin)
@@ -728,9 +730,8 @@ class ReadBackTest(ProjectCase):
         self.assertEqual(m["field_keys"]["cross_request"]["restatement"], "field_new001")
         self.assertEqual(ids["lark"]["researcher_open_id"], "ou_new")
         self.assertEqual(ids["wiki"]["space_id"], "sp_new")
-        self.assertTrue(found["决策队列"])
-        self.assertFalse(found["阻塞"])
-        self.assertTrue(all("--key-word" in c for c in calls if "view" in c))
+        self.assertEqual(found, {})
+        self.assertFalse(any("view" in c for c in calls))
         lg = ledger.Ledger(self.tmp, "offline")
         lg.field_keys = m["field_keys"]
         self.assertEqual(lg.field("cross_request", "restatement")["field_key"], "field_new001")
@@ -754,18 +755,18 @@ class ReadBackTest(ProjectCase):
         with self.assertRaises(setup.SetupError):
             self.read_back(fake_run, tempfile.mkdtemp(dir=self.tmp))
 
-    def test_view_search_failure_is_not_fatal(self):
+    def test_initialization_never_calls_view_configuration_or_search(self):
         fd = {"types": {"tk_dec": {"name": "决策", "api_name": "decision", "fields": []}}}
         fake_run, _ = self.fake_feishu_cli(fd)
 
         def flaky(cmd, timeout=30):
             if "view" in cmd and "search" in cmd:
-                return 1, "", "server busy"
+                self.fail("初始化不应查询视图")
             return fake_run(cmd, timeout)
         (ids, _, found), out = self.run_quiet(self.read_back, flaky, tempfile.mkdtemp(dir=self.tmp))
-        self.assertIsNone(found["决策队列"])
+        self.assertEqual(found, {})
         self.assertEqual(ids["meegle"]["project_key"], "pk_new")
-        self.assertIn("没能读回视图", out)
+        self.assertNotIn("没能读回视图", out)
 
     def test_migration_lists_what_was_missing(self):
         ids, fd = fake_feishu(self.spec)
@@ -779,11 +780,11 @@ class ReadBackTest(ProjectCase):
         md = setup.migration_md(self.spec, ids, fd, {"决策队列": True}, problems)
         self.assertIn("| 反馈的“主文档” | 空间里没有 |", md)
         self.assertIn("缺选项：下发、执行", md)
-        self.assertIn("## 网页上还要做的事", md)
+        self.assertIn("## 模板维护说明", md)
         self.assertIn("项目空间从模板空间（默认叫 std_template）", md)
         self.assertIn("研究员的 open_id", md)
-        self.assertIn("| 阻塞 | 同序列需求 | 待核对 |", md)
-        self.assertIn("| 决策队列 | 决策 | 已有 | 确认已放进空间置顶", md)
+        self.assertNotIn("## 条件视图", md)
+        self.assertIn("禁止用 computer-use 配置视图", md)
 
 
 class SecondRoundTest(ProjectCase):
@@ -1146,10 +1147,10 @@ class ThirdRoundTest(ProjectCase):
 
     def test_view_answers(self):
         _, (fd, found, _), _ = self.read_back(self.fake_cli(view_answer=[]))
-        self.assertIs(found["决策队列"], False)
+        self.assertEqual(found, {})
         _, (fd, found, _), out = self.read_back(self.fake_cli(view_answer={"weird": {"shape": 1}}))
-        self.assertIsNone(found["决策队列"])
-        self.assertIn("读不懂", out)
+        self.assertEqual(found, {})
+        self.assertNotIn("视图", out)
 
     def test_export_skips_types_switched_off(self):
         import export_field_dictionary as efd
@@ -1998,9 +1999,9 @@ class SixthRoundLedgerTest(ProjectCase):
     def test_knowledge_base_items_are_per_project(self):
         ids, _ = fake_feishu(self.spec)
         md = setup.migration_md(self.spec, ids, None, None)
-        self.assertIn("五份包模板", md[md.index("## 网页上还要做的事"):])
+        self.assertIn("五份包模板", md[md.index("## 模板维护说明"):])
         self.assertNotIn("分享链接", md)
-        self.assertIn("在模板空间里做", md[md.index("## 网页上还要做的事"):])
+        self.assertIn("在模板空间里做", md[md.index("## 模板维护说明"):])
 
 class SeventhRoundTest(ProjectCase):
     """Cases from the sixth check, which stopped half way: its repro scripts were replayed by hand."""
@@ -2885,7 +2886,14 @@ class FeishuDocsTest(ProjectCase):
         lg = StubLedger(self.tmp, "apply", [(("wiki", "+node-list"), empty),
                                             (("wiki", "+node-create"), {"data": {"node": {"node_token": "wikNew0001"}}})])
         lg.nodes.clear()
-        self.run_quiet(ledger.ensure_all_nodes, lg)
+        original_lark = lg.lark
+        def unique_nodes(*args, **kwargs):
+            result = original_lark(*args, **kwargs)
+            if "+node-create" in args:
+                return {"data": {"node": {"node_token": "wikNew%04d" % len(lg.calls)}}}
+            return result
+        with mock.patch.object(lg, "lark", side_effect=unique_nodes):
+            self.run_quiet(ledger.ensure_all_nodes, lg)
         creates = [c[0] for c in lg.calls if "+node-create" in c[0]]
         keys = self.spec.node_keys()
         self.assertEqual(len(creates), len(keys))

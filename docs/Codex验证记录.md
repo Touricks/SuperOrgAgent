@@ -1,5 +1,7 @@
 # Codex 适配验证记录
 
+此文件保留 0.5.1-codex.1 首发前的验证记录，用于追溯当时的测试与安装证据。当前版本、显示规则和验收口径见 [Codex 实测修复记录](Codex实测修复.md)；下文的旧置顶与 UserPromptSubmit 要求不再用于新项目。
+
 更新时间：2026-11-03（America/New_York）。代码分支：`codex/desktop-adapter`。上游基线：0.5.1，提交 `5df116a`。Codex 开发版：0.5.1-codex.1。
 
 ## 已完成

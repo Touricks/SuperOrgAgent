@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 import uuid
@@ -107,10 +108,7 @@ class Pool:
             name = slot["name"]
             binding = state["bindings"].get(name)
             if binding:
-                if slot["pin"] and not binding.get("pinned"):
-                    actions.append({"action": "pin", "slot": name, "thread_id": binding["thread_id"],
-                                    "host_id": binding["host_id"], "tool": "move_thread_to_sidebar_section",
-                                    "sectionId": "pinned"})
+                continue
             elif name in state["pending"]:
                 actions.append({"action": "reconcile_creation", "slot": name, **state["pending"][name]})
             else:
@@ -118,7 +116,9 @@ class Pool:
         bindings = {name: dict(b, activity=state["sessions"].get(b["thread_id"], {}))
                     for name, b in state["bindings"].items()}
         return {"workspace": state["workspace"], "actions": actions, "bindings": bindings,
-                "messages": state["messages"], "history": state["history"]}
+                "messages": state["messages"], "history": state["history"],
+                "priority_order": self.config.get("priority_order", []),
+                "sidebar_note": "角色留在项目分组；关键入口顺序见 org/会话入口.md，原生工具暂不支持项目内固定排序"}
 
     def reserve(self, name):
         if name not in self.slots:
@@ -205,10 +205,10 @@ class Pool:
             state["history"].append(dict(b, slot=name, retired_at=now(), reason=reason))
             del state["bindings"][name]
         return {"action": "reserve_replacement", "slot": name,
-                "note": "工作项、文档和消息记录保留；新会话绑定并置顶后再取消旧会话置顶"}
+                "note": "工作项、文档和消息记录保留；新会话归入原项目，不改全局置顶"}
 
     def observe(self, snapshot):
-        """Readback of native list_threads: pinnedThreads is complete; recents may be partial."""
+        """Read project membership from native list_threads; the recent threads list may be partial."""
         if not isinstance(snapshot, dict) or not isinstance(snapshot.get("pinnedThreads"), list):
             raise RuntimeError("需要原生 list_threads 的完整 pinnedThreads 返回，不能用自行列的置顶名单")
         pinned = set()
@@ -226,6 +226,13 @@ class Pool:
                 raise RuntimeError("原生会话列表有不可用主机，保留上次置顶状态，先恢复查询")
             for b in state["bindings"].values():
                 b.update(pinned=(b["host_id"], b["thread_id"]) in pinned, pin_observed_at=now())
+                matches = [t for t in snapshot["pinnedThreads"] + snapshot.get("threads", [])
+                           if (t.get("hostId"), t.get("threadId") or t.get("id")) == (b["host_id"], b["thread_id"])]
+                projects = {t.get("projectId") for t in matches if t.get("projectId")}
+                if len(projects) > 1:
+                    raise RuntimeError("同一会话的项目归属回读冲突，请重新查询")
+                if matches:
+                    b.update(observed_project_id=next(iter(projects), None), project_observed_at=now())
         return {"pinned_count": len(pinned)}
 
     def context(self, thread=None):
@@ -249,6 +256,18 @@ class Pool:
             return {"slot": name, "focus": binding["focus"]}
 
     def message(self, to, kind, text, package=None, work_item=None, thread=None, key=None):
+        state = self.load()
+        sender, _ = self.binding_for(state, thread or os.environ.get("CODEX_THREAD_ID", ""))
+        if not sender or not state["bindings"].get(to):
+            raise RuntimeError("发出方和接收方必须已绑定")
+        request = dict(sender=sender, to=to, kind=kind, text=text, package=package, work_item=work_item)
+        fingerprint = hashlib.sha256(json.dumps(request, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        key = key or fingerprint
+        duplicate = next((m for m in state["messages"].values() if m.get("request_key") == key), None)
+        if duplicate and duplicate.get("fingerprint") != fingerprint:
+            raise RuntimeError("相同消息 key 对应不同内容")
+        # Network reads must not hold the pool lock used by every role's hooks.
+        gate = self.dispatch_gate(to, kind, package, work_item) if kind in ("assign", "review") and not duplicate else None
         with self.locked() as state:
             sender, b = self.binding_for(state, thread or os.environ.get("CODEX_THREAD_ID", ""))
             recipient = state["bindings"].get(to)
@@ -266,17 +285,97 @@ class Pool:
                     return {"action": "reuse", "message_id": old_id, **old,
                             "note": "已经登记过；先核对现有发送/接收状态，不要再次发送"}
             mid = str(uuid.uuid4())
+            if gate and recipient["thread_id"] != gate["thread_id"]:
+                raise RuntimeError("检查后接收会话已替换，请重新派活")
             m = {"from": sender, "to": to, "kind": kind, "text": text, "package": package,
                  "work_item": work_item, "status": "prepared", "prepared_at": now(),
                  "thread_id": recipient["thread_id"], "host_id": recipient["host_id"],
-                 "request_key": key, "fingerprint": fingerprint}
+                 "request_key": key, "fingerprint": fingerprint, "dispatch_check": gate}
             state["messages"][mid] = m
             prompt = "[agent-org:%s]\n%s → %s · %s\n工作项：%s\n任务包：%s\n%s" % (
                 mid, sender, to, kind, work_item or "无", package or "无", text)
+            prompt += ("\n接收后先执行：python3 -I .agent-org/bin/codex_runtime.py ack %s"
+                       "\n实际处理完再执行同一命令并加 --handled。收到/处理回执不替代业务验收。") % mid
+            if gate:
+                prompt += "\n写入业务产物或过程材料前执行：python3 -I .agent-org/bin/codex_runtime.py start %s；检查通过才开工。" % mid
             m["prompt"] = prompt
             return {"action": "send", "message_id": mid, "tool": "send_message_to_thread", "thread_id": recipient["thread_id"],
                     "host_id": recipient["host_id"], "prompt": prompt, "defer": bool(recipient.get("focus")),
                     "note": "仅在用户已授权本次会话通信时调用；失败或结果未知先核对，不盲目重发"}
+
+    def dispatch_gate(self, to, kind, package, work_item, starting=False):
+        import ledger
+        if not package or not work_item or not str(work_item).isdigit():
+            raise RuntimeError("派活/送审必须给任务包路径和已登记的工作项 ID")
+        binding = self.load()["bindings"].get(to)
+        if not binding:
+            raise RuntimeError("接收方必须已绑定")
+        path = (self.root / package).resolve()
+        if not path.is_relative_to(self.root) or not path.is_file():
+            raise RuntimeError("任务包必须是当前项目内已有的文件")
+        content = path.read_bytes()
+        body = content.decode("utf-8")
+        scopes = {}
+        for key, label in (("product_scope", "业务产物写入范围"), ("process_scope", "过程材料写入范围")):
+            match = re.search(r"^- " + label + r"[：:][ \t]*([^\r\n]*)", body, re.M)
+            value = match.group(1).strip() if match else ""
+            if not value or re.search(r"[<>]|待定|待补|TODO", value, re.I):
+                raise RuntimeError("任务包必须明确“%s”，先由发出方澄清，不扩大授权范围" % label)
+            scopes[key] = value
+        expected_package = "送审包" if kind == "review" else "需求包"
+        if not re.search(r"^- 包类型：" + expected_package + r"\s*$", body, re.M):
+            raise RuntimeError("消息类型与任务包不匹配：需要" + expected_package)
+        lg = ledger.Ledger(str(self.root), "preview")
+        try:
+            binding_meta = lg.ids.get("meegle") or {}
+            if not all(binding_meta.get(k) for k in ("project_key", "bound_at", "types")) or ledger.other_space(
+                    read(self.root / "spec/task.json", {}), binding_meta):
+                raise RuntimeError("飞书目标空间没有完成有效绑定")
+            receipt = ledger.find_receipt(lg, str(path))
+            if not receipt or receipt.get("status") != "registered" or str(receipt.get("work_item_id")) != str(work_item):
+                raise RuntimeError("任务包没有该工作项的完整登记回执，请先交书记员登记")
+            item = lg.item(work_item)
+            wid = item.get("type") if item else None
+            allowed = {"same_seq": ("执行中",), "review": ("待核查",),
+                       "cross_request": ("已接单",) if starting else ("待接单", "已接单")}
+            if (kind == "review" and wid != "review") or (kind == "assign" and wid not in ("same_seq", "cross_request")):
+                raise RuntimeError("工作项类型与消息不匹配")
+            if item.get("state") not in allowed[wid]:
+                raise RuntimeError("工作项 #%s 当前为%s；须由书记员先流转至%s并回读，不能先写产物后补开工" %
+                                   (work_item, item.get("state"), "/".join(allowed[wid])))
+            if lg.text_of(item, "main_doc") != receipt.get("doc") or not receipt.get("doc"):
+                raise RuntimeError("工作项主文档与登记回执不一致")
+            if wid == "same_seq" and lg.text_of(item, "owner_session") != to:
+                raise RuntimeError("工作项负责会话与接收池位不一致，先交书记员更新")
+            if wid == "review":
+                source = lg.text_of(item, "source_item")
+                source_item = lg.item(ledger.item_id_of(source)) if source else None
+                if not source_item or source_item.get("state") != "待验收":
+                    raise RuntimeError("送审前来源工作项必须回读为待验收")
+        except ledger.LedgerError as exc:
+            raise RuntimeError("派活检查未通过：" + str(exc)) from exc
+        return dict(scopes, state=item["state"], checked_at=now(), work_item=str(work_item),
+                    project_key=lg.key, thread_id=binding["thread_id"],
+                    package_sha256=hashlib.sha256(content).hexdigest())
+
+    def start(self, mid, thread=None):
+        state = self.load()
+        thread = thread or os.environ.get("CODEX_THREAD_ID", "")
+        name, _ = self.binding_for(state, thread)
+        message = state["messages"].get(mid)
+        if not message or message["to"] != name or message["kind"] not in ("assign", "review"):
+            raise RuntimeError("只有派活/送审的接收方能记录开工检查")
+        if not message.get("received_at"):
+            raise RuntimeError("先 ack 记录收到，再检查开工")
+        gate = self.dispatch_gate(name, message["kind"], message["package"], message["work_item"], starting=True)
+        original = message.get("dispatch_check") or {}
+        if original.get("package_sha256") != gate["package_sha256"]:
+            raise RuntimeError("派活后任务包已改变；由发出方核对变更并登记新消息，不沿用旧授权")
+        with self.locked() as current:
+            if current["bindings"].get(name, {}).get("thread_id") != thread:
+                raise RuntimeError("检查期间会话绑定已变化")
+            current["messages"][mid]["start_check"] = gate
+        return gate
 
     def receipt(self, mid, status, evidence, thread=None):
         with self.locked() as state:
@@ -321,18 +420,19 @@ class Pool:
             if not b:
                 issues.append("未绑定：" + name)
                 continue
-            if slot["pin"] and not b.get("pinned"):
-                issues.append("未回读确认置顶：" + name)
+            if b.get("observed_project_id") != (state.get("workspace") or {}).get("project_id"):
+                issues.append("未回读确认项目归属：" + name)
             session = state["sessions"].get(b["thread_id"], {})
             if not session.get("pretool_seen"):
                 issues.append("未观察到角色会话 PreToolUse：" + name)
         if not state["workspace"]:
             issues.append("尚未绑定 Codex 项目")
-        for event in ("SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"):
+        for event in ("SessionStart", "PreToolUse", "Stop"):
             if not state["hooks_seen"].get(event):
                 issues.append("未观察到 hook：" + event)
         return {"ready": not issues, "issues": issues, "bound": len(state["bindings"]),
-                "expected": len(self.slots), "note": "本地身份/置顶/hook 检查；飞书连接、登记与独立验收另行验证"}
+                "expected": len(self.slots), "message_receipts": "receiver_ack",
+                "note": "本地身份/项目归属/hook 检查；原生消息显式 ack，业务登记与独立验收另行验证"}
 
 
 def assert_writer(root, command):
@@ -370,6 +470,7 @@ def main(argv=None):
     p = sub.add_parser("message"); p.add_argument("to"); p.add_argument("--kind", required=True, choices=("assign", "report", "register", "review", "decide", "notify")); p.add_argument("--text", required=True); p.add_argument("--package"); p.add_argument("--work-item"); p.add_argument("--key")
     p = sub.add_parser("receipt"); p.add_argument("id"); p.add_argument("status", choices=("queued", "delivered", "failed", "unknown")); p.add_argument("--evidence", required=True)
     p = sub.add_parser("ack"); p.add_argument("id"); p.add_argument("--handled", action="store_true")
+    p = sub.add_parser("start"); p.add_argument("id")
     args = ap.parse_args(argv)
     try:
         pool = Pool(args.target or project_paths.project_root())
@@ -388,6 +489,7 @@ def main(argv=None):
         elif c == "message": result = pool.message(args.to, args.kind, args.text, args.package, args.work_item, key=args.key)
         elif c == "receipt": result = pool.receipt(args.id, args.status, args.evidence)
         elif c == "ack": result = pool.acknowledge(args.id, args.handled)
+        elif c == "start": result = pool.start(args.id)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 1 if c == "check" and not result["ready"] else 0
     except (RuntimeError, OSError, ValueError) as e:

@@ -28,8 +28,14 @@ def modules():
 
 
 def patch_paths(value):
+    if isinstance(value, str) and not value.lstrip().startswith("*** Begin Patch"):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            pass
     if isinstance(value, dict):
-        value = value.get("patch") or value.get("input") or ""
+        # Native Codex hooks use command, including calls through functions.exec.
+        value = value.get("command") or value.get("patch") or value.get("input") or ""
     if not isinstance(value, str) or "*** Begin Patch" not in value:
         raise runtime.RuntimeError("无法识别 apply_patch 的路径，停止这次编辑")
     paths = re.findall(r"^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$", value, re.M)

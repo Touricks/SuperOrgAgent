@@ -59,13 +59,146 @@ class CodexTest(unittest.TestCase):
     def denied(self, response):
         return response.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
 
-    def test_layout_rules_and_eight_pins(self):
+    def dispatch_fixture(self):
+        self.bind("PMO-p2-01", "pmo"); self.bind("Alg-p1-01", "worker")
+        path = self.root / "packages/drafts/alg/request.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# 需求包：测试\n- 包类型：需求包\n"
+                        "## 授权与边界\n- 业务产物写入范围：repo/output.txt\n"
+                        "- 过程材料写入范围：packages/drafts/alg/、test-run/evidence/\n")
+        lg = ledger.Ledger(str(self.root), "apply")
+        ledger.save_receipt(lg, str(path), "101", "registered", doc="https://example.test/wiki/main")
+        ids = {"meegle": {}}
+        ids["meegle"].update(project_key="space", space_name="测试空间", bound_at="2026-11-03T12:00:00Z", types={"same_seq": {"type_key": "package"}},
+            field_keys={"same_seq": {"owner_session": "owner", "main_doc": "doc", "source_item": "source"}})
+        (self.root / "feishu/ids.json").write_text(json.dumps(ids))
+        task = json.loads((self.root / "spec/task.json").read_text())
+        task["feishu"]["meegle_space"] = "测试空间"
+        (self.root / "spec/task.json").write_text(json.dumps(task))
+        item = {"type": "same_seq", "state": "执行中", "fields": {"owner": "Alg-p1-01", "doc": "https://example.test/wiki/main"}}
+        return path, item
+
+    def test_dispatch_checks_live_start_state_before_sending(self):
+        path, item = self.dispatch_fixture()
+        item["state"] = "待开工"
+        with mock.patch.object(ledger.Ledger, "item", return_value=item):
+            with self.assertRaisesRegex(runtime.RuntimeError, "执行中"):
+                self.pool.message("Alg-p1-01", "assign", "开工", str(path), "101", "pmo")
+        self.assertEqual(self.pool.load()["messages"], {})
+
+    def test_receiver_rechecks_state_and_scope_before_start(self):
+        path, item = self.dispatch_fixture()
+        with mock.patch.object(ledger.Ledger, "item", return_value=item):
+            message = self.pool.message("Alg-p1-01", "assign", "开工", str(path), "101", "pmo")
+            self.pool.acknowledge(message["message_id"], thread="worker")
+            with self.assertRaises(runtime.RuntimeError): self.pool.start(message["message_id"], thread="pmo")
+            item["state"] = "阻塞"
+            with self.assertRaises(runtime.RuntimeError): self.pool.start(message["message_id"], thread="worker")
+            item["state"] = "执行中"
+            result = self.pool.start(message["message_id"], thread="worker")
+        self.assertEqual(result["state"], "执行中")
+        self.assertIn("process_scope", result)
+
+    def test_dispatch_rejects_missing_process_scope_and_wrong_owner(self):
+        path, item = self.dispatch_fixture()
+        original = path.read_text()
+        with mock.patch.object(ledger.Ledger, "item", return_value=item):
+            path.write_text(original.split("- 过程材料")[0])
+            with self.assertRaisesRegex(runtime.RuntimeError, "过程材料"):
+                self.pool.message("Alg-p1-01", "assign", "开工", str(path), "101", "pmo")
+            path.write_text(original.split("- 过程材料")[0] + "- 过程材料写入范围：\n- 其他内容：不能当作授权路径\n")
+            with self.assertRaisesRegex(runtime.RuntimeError, "过程材料"):
+                self.pool.message("Alg-p1-01", "assign", "开工", str(path), "101", "pmo")
+            path.write_text(original)
+            item["fields"]["owner"] = "Alg-p0-01"
+            with self.assertRaisesRegex(runtime.RuntimeError, "负责会话"):
+                self.pool.message("Alg-p1-01", "assign", "开工", str(path), "101", "pmo")
+
+    def test_dispatch_requires_registered_receipt_and_matching_document(self):
+        path, item = self.dispatch_fixture()
+        lg = ledger.Ledger(str(self.root), "apply")
+        with mock.patch.object(ledger.Ledger, "item", return_value=item):
+            ledger.save_receipt(lg, str(path), "101", "created")
+            with self.assertRaisesRegex(runtime.RuntimeError, "登记回执"):
+                self.pool.message("Alg-p1-01", "assign", "开工", str(path), "101", "pmo")
+            ledger.save_receipt(lg, str(path), "101", "registered")
+            item["fields"]["doc"] = "https://example.test/wiki/other"
+            with self.assertRaisesRegex(runtime.RuntimeError, "主文档"):
+                self.pool.message("Alg-p1-01", "assign", "开工", str(path), "101", "pmo")
+        self.assertEqual(self.pool.load()["messages"], {})
+
+    def test_changed_package_requires_a_new_dispatch(self):
+        path, item = self.dispatch_fixture()
+        with mock.patch.object(ledger.Ledger, "item", return_value=item):
+            message = self.pool.message("Alg-p1-01", "assign", "开工", str(path), "101", "pmo")
+            self.pool.acknowledge(message["message_id"], thread="worker")
+            path.write_text(path.read_text().replace("repo/output.txt", "repo/"))
+            with self.assertRaisesRegex(runtime.RuntimeError, "任务包已改变"):
+                self.pool.start(message["message_id"], thread="worker")
+        self.assertNotIn("start_check", self.pool.load()["messages"][message["message_id"]])
+
+    def test_new_request_key_cannot_skip_live_dispatch_checks(self):
+        path, item = self.dispatch_fixture()
+        with mock.patch.object(ledger.Ledger, "item", return_value=item):
+            original = self.pool.message("Alg-p1-01", "assign", "开工", str(path), "101", "pmo", key="explicit")
+            item["state"] = "阻塞"
+            self.assertEqual(self.pool.message("Alg-p1-01", "assign", "开工", str(path), "101", "pmo", key="explicit")["action"], "reuse")
+            with self.assertRaisesRegex(runtime.RuntimeError, "执行中"):
+                self.pool.message("Alg-p1-01", "assign", "开工", str(path), "101", "pmo")
+        self.assertEqual(list(self.pool.load()["messages"]), [original["message_id"]])
+
+    def test_cross_request_requires_acceptance_before_start(self):
+        path, item = self.dispatch_fixture()
+        item.update(type="cross_request", state="待接单")
+        ids_path = self.root / "feishu/ids.json"
+        ids = json.loads(ids_path.read_text())
+        ids["meegle"]["field_keys"]["cross_request"] = ids["meegle"]["field_keys"]["same_seq"]
+        ids_path.write_text(json.dumps(ids))
+        with mock.patch.object(ledger.Ledger, "item", return_value=item):
+            message = self.pool.message("Alg-p1-01", "assign", "请承接", str(path), "101", "pmo")
+            self.pool.acknowledge(message["message_id"], thread="worker")
+            with self.assertRaisesRegex(runtime.RuntimeError, "已接单"):
+                self.pool.start(message["message_id"], thread="worker")
+            item["state"] = "已接单"
+            self.assertEqual(self.pool.start(message["message_id"], thread="worker")["state"], "已接单")
+
+    def test_review_rechecks_source_before_work(self):
+        path, item = self.dispatch_fixture()
+        path.write_text(path.read_text().replace("包类型：需求包", "包类型：送审包"))
+        ids_path = self.root / "feishu/ids.json"
+        ids = json.loads(ids_path.read_text())
+        ids["meegle"]["field_keys"]["review"] = ids["meegle"]["field_keys"]["same_seq"]
+        ids_path.write_text(json.dumps(ids))
+        item.update(type="review", state="待核查")
+        item["fields"]["source"] = "202"
+        source = {"type": "same_seq", "state": "执行中"}
+        with mock.patch.object(ledger.Ledger, "item", side_effect=lambda wid: item if str(wid) == "101" else source):
+            with self.assertRaisesRegex(runtime.RuntimeError, "来源工作项"):
+                self.pool.message("Alg-p1-01", "review", "审查", str(path), "101", "pmo")
+            source["state"] = "待验收"
+            message = self.pool.message("Alg-p1-01", "review", "审查", str(path), "101", "pmo")
+            self.pool.acknowledge(message["message_id"], thread="worker")
+            source["state"] = "执行中"
+            with self.assertRaisesRegex(runtime.RuntimeError, "来源工作项"):
+                self.pool.start(message["message_id"], thread="worker")
+
+    def test_project_readback_handles_pinned_duplicates_and_detects_moved_chat(self):
+        self.bind("Alg-p2-01", "alg")
+        row = {"id": "alg", "hostId": "local", "projectId": "project-test"}
+        self.pool.observe({"pinnedThreads": [row], "threads": [row]})
+        self.assertEqual(self.pool.load()["bindings"]["Alg-p2-01"]["observed_project_id"], "project-test")
+        row = dict(row, projectId="other-project")
+        self.pool.observe({"pinnedThreads": [], "threads": [row]})
+        self.assertIn("未回读确认项目归属：Alg-p2-01", self.pool.check()["issues"])
+
+    def test_layout_rules_and_eight_project_entrypoints(self):
         self.assertFalse((self.root / ".claude").exists())
         self.assertFalse((self.root / "CLAUDE.md").exists())
         self.assertEqual(self.plan.manifest["upstream_version"], "0.5.1")
         self.assertEqual(len(self.pool.slots), 21)
-        pins = [s["role"] for s in self.pool.config["slots"] if s["pin"]]
-        self.assertEqual(pins, list(codex_setup.PIN_ROLES))
+        priority = [s["role"] for s in self.pool.config["slots"] if s["priority"]]
+        self.assertEqual(priority, list(codex_setup.PRIORITY_ROLES))
+        self.assertFalse(any(s["pin"] for s in self.pool.slots.values()))
         self.assertTrue(all(s["model"] == "inherit" for s in self.pool.slots.values()))
         self.assertEqual((self.root / ".agent-org/orgspec/rules.json").read_bytes(), (ROOT / "orgspec/rules.json").read_bytes())
 
@@ -159,7 +292,7 @@ class CodexTest(unittest.TestCase):
             {"id": "other", "hostId": "local"}, {"id": "alg", "hostId": "local"}, {"id": "cloud", "kind": "chatgpt"}]})
         self.assertFalse(any(a["action"] == "pin" for a in self.pool.plan()["actions"]))
         self.pool.observe({"pinnedThreads": [{"id": "router", "hostId": "local"}]})
-        self.assertEqual([a["slot"] for a in self.pool.plan()["actions"] if a["action"] == "pin"], ["Alg-p2-01"])
+        self.assertFalse(any(a["action"] == "pin" for a in self.pool.plan()["actions"]))
 
     def test_unavailable_host_does_not_unpin(self):
         self.bind("Alg-p2-01", "alg")
@@ -180,8 +313,8 @@ class CodexTest(unittest.TestCase):
 
     def test_message_idempotency_and_no_false_receipt(self):
         self.bind("PMO-p2-01", "pmo"); self.bind("Alg-p2-01", "alg")
-        m = self.pool.message("Alg-p2-01", "assign", "开工", "package.md", "101", "pmo")
-        repeated = self.pool.message("Alg-p2-01", "assign", "开工", "package.md", "101", "pmo")
+        m = self.pool.message("Alg-p2-01", "notify", "补充", "package.md", "101", "pmo")
+        repeated = self.pool.message("Alg-p2-01", "notify", "补充", "package.md", "101", "pmo")
         self.assertEqual(repeated["action"], "reuse")
         self.assertEqual(repeated["message_id"], m["message_id"])
         self.pool.receipt(m["message_id"], "queued", "原生工具排队回执", "pmo")
@@ -254,6 +387,48 @@ class CodexTest(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn('"role": "alg-p2"', json.loads(p.stdout)["hookSpecificOutput"]["additionalContext"])
 
+    def test_native_command_patch_allows_drafts_and_denies_protected_files(self):
+        self.bind("Alg-p2-01", "alg")
+        command = [sys.executable, "-I", "-B", str(self.root / ".agent-org/bin/codex_hook.py")]
+        for path, blocked in (("packages/drafts/alg/plan.md", False),
+                              ("test-run/evidence/check.json", False),
+                              (".agent-org/policy.json", True), ("repo/eval/test.py", True)):
+            patch = "*** Begin Patch\n*** Add File: %s\n+data\n*** End Patch" % (self.root / path)
+            event = dict(session_id="alg", hook_event_name="PreToolUse", cwd=str(self.root),
+                         tool_name="apply_patch", tool_input={"command": patch})
+            result = subprocess.run(command, input=json.dumps(event), text=True, capture_output=True)
+            with self.subTest(path=path):
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.denied(json.loads(result.stdout)), blocked)
+
+    def test_native_messages_include_explicit_receiver_receipt(self):
+        self.bind("PMO-p2-01", "pmo"); self.bind("Alg-p2-01", "alg")
+        message = self.pool.message("Alg-p2-01", "notify", "需要接收确认", thread="pmo")
+        self.assertIn("ack " + message["message_id"], message["prompt"])
+        self.pool.receipt(message["message_id"], "delivered", "原生工具返回", "pmo")
+        self.assertNotIn("received_at", self.pool.load()["messages"][message["message_id"]])
+        self.tool("alg", "pwd")
+        self.assertNotIn("received_at", self.pool.load()["messages"][message["message_id"]])
+        self.pool.acknowledge(message["message_id"], thread="alg")
+        self.assertEqual(self.pool.load()["messages"][message["message_id"]]["status"], "received")
+        self.pool.acknowledge(message["message_id"], handled=True, thread="alg")
+        self.assertEqual(self.pool.load()["messages"][message["message_id"]]["status"], "handled")
+
+    def test_native_setup_does_not_require_global_pins_or_user_prompt_event(self):
+        for name in self.pool.slots:
+            self.bind(name, name)
+            self.event("SessionStart", name)
+            self.tool(name, "pwd")
+            self.event("Stop", name)
+        self.pool.observe({"pinnedThreads": [], "threads": [
+            {"id": name, "hostId": "local", "projectId": "project-test"} for name in self.pool.slots]})
+        self.assertTrue(self.pool.check()["ready"], self.pool.check())
+        self.assertFalse(any(a["action"] == "pin" for a in self.pool.plan()["actions"]))
+
+    def test_document_title_has_no_literal_heading_marker(self):
+        title = orgspec.OrgSpec().rules["naming"]["main_doc"].replace("<工作项 ID>", "123")
+        self.assertFalse(title.startswith("#"), "飞书导出会加一级标题标记，名称不能再以 # 开头")
+
     def test_corrupt_state_blocks_hook(self):
         self.pool.file.write_text("{broken")
         cmd = [sys.executable, "-I", "-B", str(self.root / ".agent-org/bin/codex_hook.py")]
@@ -266,7 +441,8 @@ class CodexTest(unittest.TestCase):
         for name, s in self.pool.slots.items():
             self.bind(name, name)
             if s["pin"]: pinned.append({"id": name, "hostId": "local"})
-        self.pool.observe({"pinnedThreads": pinned})
+        self.pool.observe({"pinnedThreads": pinned, "threads": [
+            {"id": name, "hostId": "local", "projectId": "project-test"} for name in self.pool.slots]})
         self.assertFalse(self.pool.check()["ready"])
         for name in self.pool.slots:
             self.event("SessionStart", name)

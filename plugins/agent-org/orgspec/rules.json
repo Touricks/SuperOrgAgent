@@ -690,7 +690,7 @@
     },
     "tag": "[<简写>+<职级>]",
     "work_item": "<包名>（<作者会话名>）：<任务名>",
-    "main_doc": "#<工作项 ID> <包名>（<作者会话名>）：<任务名>",
+    "main_doc": "工作项 <工作项 ID>｜<包名>（<作者会话名>）：<任务名>",
     "reply_doc": "<答复包名>（<作者会话名>）：<同一个任务名>",
     "draft": "packages/drafts/<序列>/YYYYMMDD-<包名>-<简称>.md"
   },
@@ -1432,49 +1432,6 @@
         }
       ]
     },
-    "views": [
-      {
-        "name": "决策队列",
-        "on": "decision",
-        "where": "状态 = 待决定",
-        "order": "紧急程度（插队、今天、本周、可延后），再按截止时间",
-        "pinned": true
-      },
-      {
-        "name": "阻塞",
-        "on": "same_seq",
-        "where": "状态 = 阻塞",
-        "columns": "名称、状态、序列、负责会话、阻塞原因、阻塞开始日期、截止时间、发出方",
-        "pinned": true
-      },
-      {
-        "name": "待验收",
-        "on": "same_seq",
-        "where": "状态 = 待验收",
-        "columns": "名称、状态、序列、送审包、截止时间、负责会话、发出方",
-        "pinned": true
-      },
-      {
-        "name": "待核查",
-        "on": "review",
-        "where": "状态 = 待核查",
-        "order": "截止时间",
-        "columns": "名称、状态、核查深度、用途、截止时间、来源工作项、序列、发出方",
-        "pinned": true
-      },
-      {
-        "name": "序列看板",
-        "on": "same_seq",
-        "where": "状态 ≠ 归档",
-        "mode": "看板，按序列分栏"
-      },
-      {
-        "name": "本周变化",
-        "on": "same_seq",
-        "where": "更新时间 = 本周",
-        "order": "更新时间倒序"
-      }
-    ],
     "date_rule": "日期字段写目标日期的 UTC 中午",
     "mql_rule": "MQL 用带引号的 heredoc 传入；结果在 data.<分组>[].moql_field_list 里，工作项 ID 是 {key: work_item_id, value: {long_value}}",
     "type_arg_rule": "workitem 命令的 --work-item-type 接受 api_name、type_key 和中文名；view search 的 --view-scope 只认 type_key",

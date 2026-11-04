@@ -1,6 +1,6 @@
 {
   "name": "agent-org",
-  "version": "0.5.1-codex.1",
+  "version": "0.5.1-codex.2",
   "description": "七序列的 Codex 桌面会话池、飞书任务包与项目台账，基于上游 0.5.1。",
   "author": {"name": "Fanshi"},
   "skills": "./skills-codex/",

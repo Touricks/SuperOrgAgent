@@ -1,18 +1,18 @@
 ---
 name: setup
-description: 在 Codex Desktop 初始化、升级或检查智能体组织。生成角色、会话池计划和 hooks，复用既有飞书模板空间及绑定流程。
+description: 在 Codex Desktop 初始化、升级或检查智能体组织。复用已维护的飞书模板，在五分钟配置目标下生成项目角色、hooks 和知识库，不配置自定义视图。
 ---
 
 # 初始化智能体组织
 
 本技能的插件根目录是本文件的 `../../`。先解析为绝对路径，再执行其中的 scripts，不要猜测缓存路径。项目文件使用目标工作目录。
 
-1. 读目标项目 AGENTS.md、现有 `spec/task.json` 和初始化记录。已有 Claude 项目不直接覆盖迁移；使用独立目录，保留原飞书绑定、文档和回执。任务格式见 `../../scaffold/task.codex.example.json`。Codex 使用 `runtime: codex`、`mode: pool`；模型留空继承用户配置。
-2. 检查 `codex --version`、`codex features list` 中 hooks/plugins、`lark-cli --version`、`meegle version` 和认证状态。所需原生工具：list_projects、create_thread、list_threads、read_thread、wait_threads、send_message_to_thread、move_thread_to_sidebar_section。工具不在时明确缺项，不能把配置文件当作接通证明。
-3. 运行 `python3 -I <插件根>/scripts/setup.py init --runtime codex --target <目录> --task <任务文件>`。核对预览；用户已授权初始化时加 `--apply`。用户改过的文件只生成 `.new`，本轮不升级其余文件；合并后重跑。不要覆盖用户 AGENTS.md 或已有 hook。
-4. 飞书项目沿用人工配置的 `std_template`：核对模板、在飞书项目复制模板空间、明确选择目标空间，再用原有 `setup.py template` 和 `setup.py feishu --target <目录> --live` 预览绑定；执行已授权绑定时加 `--apply`。现有类型可创建实例；缺少类型时须补模板/空间配置，不能声称 CLI 能新建工作项类型。具体读取 `../../skills/setup/references/feishu-space.md`，其中涉及 Claude 会话的操作由下一步替换。
-5. 知识库按 `org/org.md` 的文档树绑定。正式节点由已绑定书记员运行 `.agent-org/bin/ledger.py ensure-node all` 预览并执行；已有节点沿用 ID。需要创建知识空间或知识根时在用户明确的空间范围内操作，并记录到 `feishu/ids.json`，不虚构 ID。
-6. 用户明确要求开出角色会话后，按 `../entry/SKILL.md` 的开池流程执行。只初始化本地文件不等于请求创建 21 个聊天。
-7. 项目 hook 需要用户在 Settings > Hooks 审阅并信任，这是 Codex 的原生要求。不要修改全局信任记录或使用跳过信任参数。重新打开项目后用 `setup.py check --target <目录>` 检查真实 hook 记录、绑定和置顶；未通过就列出具体缺项。
+1. 从下载插件后开始配置时计时：`python3 -I <插件根>/scripts/codex_onboarding.py begin --target <目录>`。恢复同一轮沿用起点，认证、安装依赖、空间复制和 hook 信任等待都计入 300 秒。读目标项目 AGENTS.md、现有 `spec/task.json` 和初始化记录。已有 Claude 项目使用独立目录；任务格式见 `../../scaffold/task.codex.example.json`，使用 `runtime: codex`、`mode: pool`，模型留空继承用户配置。
+2. 一次检查 `codex --version`、hooks/plugins 能力、`lark-cli --version`、`meegle version`、两边认证以及 list_projects、create_thread、list_threads、read_thread、wait_threads、send_message_to_thread。缺依赖或权限时记录具体缺项；不要通过预先完成这些步骤缩短首次计时。
+3. 飞书项目复用已维护的 `std_template`。只读核对模板后，通过“分享空间配置”复制，按真实 project_key 明确选择新空间；已有授权范围内可操作复制页面。模板结构缺失交模板维护者，不在新用户初始化中搭建类型、字段或流程。**自定义视图完全排除：不创建、不补齐、不检查，不用 computer-use 配置飞书视图，也不因缺视图阻塞。** Agent 用台账条件查询工作项。具体绑定规则见 `../../skills/setup/references/feishu-space.md`。
+4. 在已授权范围内创建或选定知识空间，回读真实 ID。运行 `python3 -I <插件根>/scripts/setup.py init --runtime codex --target <目录> --task <任务文件>`，核对预览后加 `--apply`。再用 `setup.py feishu --target <目录> --live` 预览并绑定，已授权时加 `--apply`。字段字典按类型限量并发读取。保留用户 AGENTS.md 和已有 hook；生成 `.new` 时先合并再重跑，不安装混合版本。
+5. 如 Codex 要求在 Settings > Hooks 审阅并信任，说明所需操作并等待用户完成；不改全局信任记录。用户明确要求创建角色聊天后，按 `../entry/SKILL.md` 开池；只初始化本地文件不授权创建 21 个聊天。先让书记员开局，再分批创建其余角色，以便知识节点准备与其余角色开局并行。每批至多 4 个独立创建，预约、创建、绑定的依赖保持顺序。
+6. 已绑定且观察到真实 hook 的唯一书记员预览并执行 `.agent-org/bin/ledger.py ensure-node all`。完整七序列为 29 个节点；已有节点沿用 ID，同一父节点只列一次。按项目实际范围登记最小立项单，回读项目工作项和主文档。不要在配置阶段展开研究访谈、业务派活或完整测试套件。
+7. 回读原生聊天的 projectId，全部保留在所属项目中，不设全局置顶。运行 `setup.py check --target <目录>`，检查 SessionStart、PreToolUse、Stop 和真实角色绑定；UserPromptSubmit 不作必需条件。完成飞书项目、知识库和会话的当次回读后运行 `codex_onboarding.py finish --target <目录>`，保存耗时与证据。脚本的 `timing_pass` 只表示本地检查通过且未超时；三处回读缺失仍不得宣称现场通过。
 
-汇报四种结果：本地文件、真实会话、飞书绑定与知识节点、现场登记验证。分别给证据，不合并宣称“全部完成”。
+验收分开记录：三处配置和最小立项是否成功、首次配置是否在 300 秒内、后续业务交接是否通过。超时照实报告，不重置起点。完整派活、交付、质量验收及恢复测试在配置计时结束后进行，执行规则见 entry、ledger 技能。

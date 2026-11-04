@@ -25,7 +25,7 @@ claude plugin install agent-org@agent-org
 .agents/plugins/marketplace.json    Codex 本地市场（agent-org-codex）
 plugins/agent-org/
 ├─ .claude-plugin/plugin.json
-├─ .codex-plugin/plugin.json         Codex 0.5.1-codex.1
+├─ .codex-plugin/plugin.json         Codex 0.5.1-codex.2
 ├─ orgspec/                          组织规则（rules.json，英文标识）和术语表（terms.zh.json）
 ├─ scripts/                          orgspec.py 读规则和检查包；setup.py 初始化和开池清单；ledger.py 台账；route.py 路由、收件箱、聚焦会话和会话池；pool.py 认领和会话状态
 ├─ scaffold/                         初始化时生成项目文件用的模板和 hook
@@ -53,11 +53,14 @@ python3 -I plugins/agent-org/scripts/orgspec.py check
 ```bash
 python3 -I -B plugins/agent-org/tests/test_plugin.py
 python3 -I -B plugins/agent-org/tests/test_codex.py
+python3 -I -B plugins/agent-org/tests/test_initialization.py
 ```
 
 ## 状态
 
-0.5.1-codex.1：基于上游 0.5.1 增加 Codex Desktop 适配。`runtime: codex`、`mode: pool` 生成 `.agent-org/`、项目 AGENTS.md 和 `.codex/hooks.json`；长期角色绑定原生会话 ID，默认置顶七个 +2 与 PMO +1。创建预约、消息回执、聚焦与替换保留在本地；台账继续使用同一套飞书模板、绑定、锁和登记回执。现场开池、hook 信任和真实登记需按 Codex 文档完成验收。
+0.5.1-codex.2：修复实测中的原生 apply_patch 误拦截、消息收到回执、开工状态顺序、任务写入范围及文档标题问题。角色聊天保留在所属项目，八个重点入口写入 `org/会话入口.md`，不再自动全局置顶。模板新增公开条件视图后的复制实测未带出自定义视图，因此初始化不创建、不检查视图，禁止用 computer-use 配置视图。新增首次配置 300 秒计时，字段读取限量并发、知识节点按父节点复用列表。修复依据、验证结果与未完成的五分钟现场验收见 [Codex 实测修复记录](docs/Codex实测修复.md)。
+
+0.5.1-codex.1：首个 Codex Desktop 适配版。`runtime: codex`、`mode: pool` 生成 `.agent-org/`、项目 AGENTS.md 和 `.codex/hooks.json`，长期角色绑定原生会话 ID。创建预约、消息回执、聚焦与替换保留在本地；台账复用飞书模板、绑定、锁和登记回执。此版的全局置顶与 UserPromptSubmit 验收要求已由 codex.2 替代。
 
 0.5.1：项目路径里有方括号这类通配符时（比如 `Phase1[Current]`），会话池读不到各会话的状态和登记回执：`route.py pool` 把所有会话显示为“未知”、派活前找不到空闲会话，每条【派活】都被当成没有登记回执，`check` 误报会话停在旧版规则上。现在按字面读这些目录。测试在项目目录或插件安装目录里运行时，不再读到目录外的文件而误报。
 

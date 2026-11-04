@@ -1492,7 +1492,11 @@ def existing_node(lg, space, parent, key, title):
     args = ["wiki", "+node-list", "--space-id", space, "--page-all"]
     if parent:
         args += ["--parent-node-token", parent]
-    data = lg.lark(*args)
+    cache = getattr(lg, "_node_listing_cache", None)
+    cache_key = (space, parent)
+    data = cache.get(cache_key) if cache is not None else None
+    if data is None:
+        data = lg.lark(*args)
     if data is None:
         return None
     nodes = (data.get("data") or {}).get("nodes") if isinstance(data, dict) and isinstance(data.get("data"), dict) else None
@@ -1506,6 +1510,8 @@ def existing_node(lg, space, parent, key, title):
     if len(hits) > 1:
         raise LedgerError("知识空间里已经有 %d 个“%s”节点（%s）；在 feishu/ids.json 的 wiki.nodes.%s 里写明用哪一个" % (
             len(hits), title, "、".join(n["node_token"] for n in hits), key))
+    if cache is not None:
+        cache[cache_key] = {"data": {"nodes": list(nodes)}}
     return (hits[0]["node_token"], hits[0].get("title")) if hits else None
 
 
@@ -1547,6 +1553,9 @@ def ensure_node(lg, key):
         ids.setdefault("wiki", {}).setdefault("nodes", {})[key] = record
         save_json(path, ids)
         lg.nodes[key] = record                         # a child created next in the same run finds it
+        cache = getattr(lg, "_node_listing_cache", None)
+        if cache is not None and out is not None and (space, parent) in cache:
+            cache[(space, parent)]["data"]["nodes"].append(record)
         if out is not None:
             print("已建节点 %s：%s，写进 feishu/ids.json。" % (key, record["node_token"]))
         else:
@@ -1557,12 +1566,16 @@ def ensure_all_nodes(lg):
     """The whole node skeleton: the top-level nodes first, then the enabled sequences' nodes
     under them. Nodes already recorded, or already in the space under the same title, are kept."""
     manifest = load_json(os.path.join(project_paths.runtime_dir(lg.root), "manifest.json"), {})
-    for key in lg.spec.node_keys(manifest.get("sequences") or None):
-        head, _, seq = key.partition("/")
-        if seq and not (lg.nodes.get(head) or {}).get("node_token"):
-            print("节点 %s 要等上一级 %s 建好：加 --apply 时先建上一级，再建它。" % (key, head))
-            continue
-        ensure_node(lg, key)
+    lg._node_listing_cache = {}  # One listing per parent, only within this locked transaction.
+    try:
+        for key in lg.spec.node_keys(manifest.get("sequences") or None):
+            head, _, seq = key.partition("/")
+            if seq and not (lg.nodes.get(head) or {}).get("node_token"):
+                print("节点 %s 要等上一级 %s 建好：加 --apply 时先建上一级，再建它。" % (key, head))
+                continue
+            ensure_node(lg, key)
+    finally:
+        del lg._node_listing_cache
 
 
 # ---------------------------------------------------------------- reads
