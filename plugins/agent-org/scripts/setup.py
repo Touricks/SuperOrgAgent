@@ -51,6 +51,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import orgspec  # noqa: E402
 import ledger  # noqa: E402
+import project_paths  # noqa: E402
 
 PLUGIN_ROOT = orgspec.PLUGIN_ROOT
 SCAFFOLD = os.path.join(PLUGIN_ROOT, "scaffold")
@@ -60,7 +61,7 @@ DEFAULT_TEMPLATE_SPACE = "std_template"
 DEFAULT_MODELS = {"p2": "opus", "p1": "sonnet", "p0": "sonnet", "pmo-p2": "opus",
                   "pmo-router": "sonnet", "pmo-scribe": "haiku", "quality-p1": "opus"}
 REQUIRED_SEQUENCES = ("pmo", "quality")
-BIN_SCRIPTS = ("orgspec.py", "ledger.py", "route.py", "export_field_dictionary.py", "pool.py")
+BIN_SCRIPTS = ("orgspec.py", "ledger.py", "route.py", "export_field_dictionary.py", "pool.py", "project_paths.py")
 HOOK_SCRIPTS = ("guard.py", "audit.py", "instances.py", "inbox.py", "feishu_cmd.py")
 SHARED_HOOK_SCRIPTS = ("pool.py",)         # kept in scripts/, copied into the hooks too
 MODES = ("cli", "pool")
@@ -166,7 +167,7 @@ def plugin_version():
 
 
 # -------------------------------------------------------------- inputs
-TASK_KEYS = ("name", "description", "mode", "pool", "editable_paths", "protected_paths", "feishu", "models")
+TASK_KEYS = ("name", "description", "runtime", "mode", "pool", "editable_paths", "protected_paths", "feishu", "models")
 # Earlier task files described the experiment in one line each (x, f, g, h, search). Their
 # paths are taken over; the lines only seed the documents in spec/ the first time.
 LEGACY_SEEDS = (("x", "可改范围"), ("f", "目标指标"), ("g", "实验资源"), ("h", "评测协议"), ("search", "搜索方法"))
@@ -179,7 +180,7 @@ def legacy_text(raw, key):
     return v.strip() if isinstance(v, str) else ""
 
 
-def load_task_and_seeds(path):
+def load_task_and_seeds(path, runtime=None):
     """The task file in its current form, plus the one-line descriptions an earlier file gave.
 
     The task file holds only what scripts and hooks use: names, editable_paths (可改范围),
@@ -237,10 +238,18 @@ def load_task_and_seeds(path):
     if raw.get("models") is not None and not (
             isinstance(raw["models"], dict) and all(isinstance(v, str) for v in raw["models"].values())):
         raise SetupError("研究任务的 models 要写成 {\"角色或职级\": \"模型名\"}")
-    models = dict(DEFAULT_MODELS)
+    runtime = runtime or raw.get("runtime", "claude")
+    if runtime not in ("claude", "codex"):
+        raise SetupError("runtime 只能是 claude 或 codex")
+    task["runtime"] = runtime
+    models = {} if runtime == "codex" else dict(DEFAULT_MODELS)
     models.update(raw.get("models") or {})
+    if runtime == "codex" and any(v in ("opus", "sonnet", "haiku") for v in models.values()):
+        raise SetupError("Codex 不沿用 Claude 的模型别名；移除 models 以继承用户设置，或填写明确选定的 Codex 模型")
     task["models"] = models
-    mode = raw.get("mode", "cli")
+    mode = raw.get("mode", "pool" if runtime == "codex" else "cli")
+    if runtime == "codex" and mode != "pool":
+        raise SetupError("Codex 适配使用桌面会话池，mode 请填 pool")
     if mode not in MODES:
         raise SetupError("研究任务的 mode 只能是 cli（默认，子智能体）或 pool（桌面会话池）")
     task["mode"] = mode
@@ -1048,12 +1057,15 @@ class Plan:
         self.manifest = {}
 
 
-def build_plan(target, task_path, seq_arg):
+def build_plan(target, task_path, seq_arg, runtime=None):
     spec = orgspec.OrgSpec()
     problems = spec.validate()
     if problems:
         raise SetupError("规则文件有问题，先修好：\n" + "\n".join(problems))
-    task, seeds, legacy = load_task_and_seeds(task_path)
+    task, seeds, legacy = load_task_and_seeds(task_path, runtime)
+    other = ".claude/agent-org" if task["runtime"] == "codex" else ".agent-org"
+    if os.path.isfile(os.path.join(target, other, "manifest.json")):
+        raise SetupError("目标目录已有另一运行平台的组织。请使用独立目录，先保留原绑定、任务包与回执，再迁移")
     seqs = pick_sequences(spec, seq_arg)
     ids = load_ids(target)
     risk, note = resolve_risk(target)
@@ -1138,6 +1150,9 @@ def build_plan(target, task_path, seq_arg):
         "lark_risk": {"lark_cli_version": risk.get("lark_cli_version"), "commands": len(risk.get("commands", {}))},
         "files": {p: sha256(c) for p, (c, _, _) in sorted(f.items())},
     }
+    if task.get("runtime") == "codex":
+        import codex_setup
+        return codex_setup.adapt(sys.modules[__name__], plan, target, spec, task, policy, seqs)
     return plan
 
 
@@ -1150,6 +1165,9 @@ def previous_hashes(target):
 
 
 def actions_for(target, plan):
+    if plan.manifest.get("runtime") == "codex":
+        import codex_setup
+        return codex_setup.actions_for(target, plan)
     acts = []
     before = previous_hashes(target)
     for rel, (content, executable, keep) in sorted(plan.files.items()):
@@ -1277,6 +1295,9 @@ def report(target, plan, acts, apply):
 
 
 def apply_plan(target, plan, acts):
+    if plan.manifest.get("runtime") == "codex":
+        import codex_setup
+        return codex_setup.apply_plan(target, plan, acts)
     written = 0
     for kind, rel, _ in acts:
         path = os.path.join(target, rel)
@@ -1564,7 +1585,7 @@ def feishu_gaps(target, seqs):
 
 def enabled_sequences(target):
     """The sequences init enabled in this project, from its manifest; None (every sequence) when unknown."""
-    m = load_json_file(os.path.join(target, ".claude", "agent-org", "manifest.json")) if target else None
+    m = load_json_file(os.path.join(project_paths.runtime_dir(target), "manifest.json")) if target else None
     return (m or {}).get("sequences") or None
 
 
@@ -2171,6 +2192,7 @@ def main(argv=None):
     p.add_argument("--target", required=True)
     p.add_argument("--task", required=True)
     p.add_argument("--sequences")
+    p.add_argument("--runtime", choices=("claude", "codex"))
     p.add_argument("--apply", action="store_true")
     p = sub.add_parser("feishu")
     p.add_argument("--target", required=True)
@@ -2194,8 +2216,11 @@ def main(argv=None):
             return precheck()
         if args.cmd == "init":
             target = os.path.abspath(args.target)
-            plan = build_plan(target, args.task, args.sequences)
+            plan = build_plan(target, args.task, args.sequences, args.runtime)
             acts = actions_for(target, plan)
+            if plan.manifest.get("runtime") == "codex":
+                import codex_setup
+                return codex_setup.execute(target, plan, acts, args.apply)
             report(target, plan, acts, args.apply)
             if args.apply:
                 apply_plan(target, plan, acts)
@@ -2205,10 +2230,17 @@ def main(argv=None):
         if args.cmd == "template":
             return check_template(os.path.abspath(args.target) if args.target else None, args.space)
         if args.cmd == "check":
+            if os.path.isfile(os.path.join(args.target, ".agent-org", "manifest.json")):
+                import codex_setup
+                return codex_setup.check(os.path.abspath(args.target), sys.modules[__name__])
             return check(os.path.abspath(args.target))
         if args.cmd == "pool":
+            if os.path.isfile(os.path.join(args.target, ".agent-org", "manifest.json")):
+                import codex_runtime
+                print(dump_json(codex_runtime.Pool(args.target).plan()))
+                return 0
             return pool_checklist(os.path.abspath(args.target))
-    except SetupError as e:
+    except (SetupError, ValueError, OSError) as e:
         print("出错：%s" % e)
         return 2
     ap.print_help()

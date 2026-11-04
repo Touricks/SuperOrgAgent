@@ -71,6 +71,9 @@ def role_of_session(spec, session):
 
 
 def focus_state(root):
+    if os.path.isfile(os.path.join(root, ".agent-org", "manifest.json")):
+        import codex_runtime
+        return {b["role"]: b["focus"] for b in codex_runtime.Pool(root).load()["bindings"].values() if b.get("focus")}
     return load_json(os.path.join(root, "inbox", "focus.json"), {})
 
 
@@ -175,6 +178,15 @@ def result(spec, row, reason, **extra):
 def pool_info(root, session=None, item_id=None):
     """Pool mode: where the owner session stands (desktop ID, status, the researcher using it). A +0
     work name such as the ledger's 负责会话 (Alg-p0-2101) stands for the claim that owns the item."""
+    if os.path.isfile(os.path.join(root, ".agent-org", "manifest.json")):
+        import codex_runtime
+        state = codex_runtime.Pool(root).load()
+        b = state["bindings"].get(session)
+        if not b:
+            return {"session": session, "claimed": False}
+        return {"session": session, "claimed": True, "thread_id": b["thread_id"], "host_id": b["host_id"],
+                "status": state["sessions"].get(b["thread_id"], {}).get("status", "unknown"),
+                "researcher_using": bool(b.get("focus"))}
     policy = load_policy(root)
     if not policy or policy.get("mode") != "pool":
         return None
@@ -358,6 +370,8 @@ def pool_focus(spec, root, policy, action, target, topic):
 
 # ------------------------------------------------------------------ pool
 def load_policy(root):
+    if os.path.isfile(os.path.join(root, ".agent-org", "manifest.json")):
+        return load_json(os.path.join(root, ".agent-org", "policy.json"), None)
     return load_json(os.path.join(root, ".claude", "hooks", "policy.json"), None)
 
 
@@ -1011,8 +1025,14 @@ def main(argv=None):
     args = ap.parse_args(argv)
     spec = orgspec.OrgSpec()
     root = ledger.project_root()
+    codex = os.path.isfile(os.path.join(root, ".agent-org", "manifest.json"))
+    if codex and args.cmd != "classify":
+        print("Codex 的会话操作使用 codex_runtime.py；本入口只复用 classify 的业务路由")
+        return 2
     if args.cmd == "classify":
         out = classify_text(spec, root, args.text, args.offline) if args.text else classify_draft(spec, root, args.draft)
+        if codex:
+            out = json.loads(json.dumps(out, ensure_ascii=False).replace("route.py notify", "entry 技能的通知流程"))
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return 0
     if args.cmd == "notify":

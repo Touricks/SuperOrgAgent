@@ -48,6 +48,7 @@ import xml.etree.ElementTree as ET
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import orgspec  # noqa: E402
+import project_paths  # noqa: E402
 
 # name: (work item type, condition, states to leave out besides the system ones or None, description)
 QUERIES = {
@@ -73,15 +74,7 @@ class WriteMaybeDone(LedgerError):
 
 
 def project_root():
-    env = os.environ.get("CLAUDE_PROJECT_DIR")
-    if env:
-        return env
-    d = os.getcwd()
-    while d != os.path.dirname(d):
-        if os.path.isdir(os.path.join(d, ".claude", "agent-org")):
-            return d
-        d = os.path.dirname(d)
-    return os.getcwd()
+    return project_paths.project_root()
 
 
 def load_json(path, default=None):
@@ -242,6 +235,11 @@ class Ledger:
         self.nodes = wiki.get("nodes") or {}
         self.tenant = wiki.get("tenant_domain")
         self.tag = os.environ.get("AGENT_ORG_TAG", "[PMO+0]")
+        if os.path.isfile(os.path.join(root, ".agent-org", "manifest.json")):
+            import codex_runtime
+            context = codex_runtime.Pool(root).context()
+            policy = load_json(os.path.join(root, ".agent-org", "policy.json"), {})
+            self.tag = (policy.get("agents", {}).get(context.get("role")) or {}).get("tag", "[unknown]")
         self.planned = []
         self._me = None
 
@@ -1558,7 +1556,7 @@ def ensure_node(lg, key):
 def ensure_all_nodes(lg):
     """The whole node skeleton: the top-level nodes first, then the enabled sequences' nodes
     under them. Nodes already recorded, or already in the space under the same title, are kept."""
-    manifest = load_json(os.path.join(lg.root, ".claude", "agent-org", "manifest.json"), {})
+    manifest = load_json(os.path.join(project_paths.runtime_dir(lg.root), "manifest.json"), {})
     for key in lg.spec.node_keys(manifest.get("sequences") or None):
         head, _, seq = key.partition("/")
         if seq and not (lg.nodes.get(head) or {}).get("node_token"):
@@ -1788,6 +1786,12 @@ def main(argv=None):
     lock = write_lock(lg.root) if mode == "apply" else contextlib.nullcontext()
     try:
         with lock:
+            if mode == "apply" and os.path.isfile(os.path.join(lg.root, ".agent-org", "manifest.json")):
+                import codex_runtime
+                try:
+                    codex_runtime.assert_writer(lg.root, args.cmd)
+                except codex_runtime.RuntimeError as e:
+                    raise LedgerError(str(e))
             run_command(lg, args)
     except (LedgerError, orgspec.OrgSpecError, ET.ParseError, OSError) as e:
         print("出错：%s" % e)

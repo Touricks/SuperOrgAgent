@@ -1,0 +1,15 @@
+{
+  "name": "示例项目",
+  "description": "面向代码的约束优化器",
+  "runtime": "codex",
+  "mode": "pool",
+  "pool": {"p1": 1, "p0": 1, "later": [], "max_sessions": 30},
+  "editable_paths": ["repo/**"],
+  "protected_paths": ["repo/eval/**", "data/eval/**"],
+  "feishu": {
+    "meegle_space": "<明确选定的飞书项目空间>",
+    "template_space": "std_template",
+    "wiki_space": "<明确选定的知识空间>"
+  },
+  "models": {}
+}

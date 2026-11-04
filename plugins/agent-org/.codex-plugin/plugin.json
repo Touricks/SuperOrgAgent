@@ -1,0 +1,14 @@
+{
+  "name": "agent-org",
+  "version": "0.5.1-codex.1",
+  "description": "七序列的 Codex 桌面会话池、飞书任务包与项目台账，基于上游 0.5.1。",
+  "author": {"name": "Fanshi"},
+  "skills": "./skills-codex/",
+  "interface": {
+    "displayName": "智能体组织 · Codex",
+    "shortDescription": "会话作入口，文档存内容，飞书项目管状态。",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "defaultPrompt": ["在这个项目初始化 Codex 智能体组织。", "查看组织会话池、待办和需要我决定的事项。"]
+  }
+}

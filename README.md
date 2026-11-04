@@ -1,8 +1,10 @@
 # Super Org Agent
 
-Claude Code 插件：把一个研究项目组织成七个序列（产品、算法、工程、基础设施、质量、项目管理、外联）、三个职级（+0 到 +2）的子智能体或桌面会话，研究员是 +3。项目管理 +2 是研究员平时的入口，特殊情况下研究员也直接委托其余六个序列的 +2；交接写成五类任务包（需求包、交付包、送审包、验收包、决策包）；任务账本在飞书项目，任务包在飞书文档，书记员是唯一的写入方。
+Claude Code / Codex Desktop 插件：把一个研究项目组织成七个序列（产品、算法、工程、基础设施、质量、项目管理、外联）、三个职级（+0 到 +2）的子智能体或桌面会话，研究员是 +3。项目管理 +2 是研究员平时的入口，特殊情况下研究员也直接委托其余六个序列的 +2；交接写成五类任务包（需求包、交付包、送审包、验收包、决策包）；任务账本在飞书项目，任务包在飞书文档，书记员是正式文档和状态的唯一写入方。
 
-使用说明见 [docs/使用说明.md](docs/使用说明.md)。
+Claude 使用说明见 [docs/使用说明.md](docs/使用说明.md)。Codex 开发版基于 **0.5.1**，安装、初始化与验证见 [docs/Codex适配.md](docs/Codex适配.md)。
+
+在新项目里试用 Codex 版，可直接使用 [Codex 新项目测试提示词](docs/Codex新项目测试提示词.md)。它覆盖飞书项目、知识库和角色会话的初始化，并通过一次真实交接检查三者的关联。
 
 ## 安装
 
@@ -20,11 +22,14 @@ claude plugin install agent-org@agent-org
 
 ```text
 .claude-plugin/marketplace.json      插件市场清单
+.agents/plugins/marketplace.json    Codex 本地市场（agent-org-codex）
 plugins/agent-org/
 ├─ .claude-plugin/plugin.json
+├─ .codex-plugin/plugin.json         Codex 0.5.1-codex.1
 ├─ orgspec/                          组织规则（rules.json，英文标识）和术语表（terms.zh.json）
 ├─ scripts/                          orgspec.py 读规则和检查包；setup.py 初始化和开池清单；ledger.py 台账；route.py 路由、收件箱、聚焦会话和会话池；pool.py 认领和会话状态
 ├─ scaffold/                         初始化时生成项目文件用的模板和 hook
+├─ skills-codex/                     Codex 的六个技能入口，共享业务规则和包模板
 ├─ skills/
 │  ├─ setup/                         预检、初始化、搭模板空间、绑定飞书空间
 │  ├─ charter/                       立项单、阶段计划
@@ -47,9 +52,12 @@ python3 -I plugins/agent-org/scripts/orgspec.py check
 
 ```bash
 python3 -I -B plugins/agent-org/tests/test_plugin.py
+python3 -I -B plugins/agent-org/tests/test_codex.py
 ```
 
 ## 状态
+
+0.5.1-codex.1：基于上游 0.5.1 增加 Codex Desktop 适配。`runtime: codex`、`mode: pool` 生成 `.agent-org/`、项目 AGENTS.md 和 `.codex/hooks.json`；长期角色绑定原生会话 ID，默认置顶七个 +2 与 PMO +1。创建预约、消息回执、聚焦与替换保留在本地；台账继续使用同一套飞书模板、绑定、锁和登记回执。现场开池、hook 信任和真实登记需按 Codex 文档完成验收。
 
 0.5.1：项目路径里有方括号这类通配符时（比如 `Phase1[Current]`），会话池读不到各会话的状态和登记回执：`route.py pool` 把所有会话显示为“未知”、派活前找不到空闲会话，每条【派活】都被当成没有登记回执，`check` 误报会话停在旧版规则上。现在按字面读这些目录。测试在项目目录或插件安装目录里运行时，不再读到目录外的文件而误报。
 
